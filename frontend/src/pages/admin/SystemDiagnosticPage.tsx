@@ -4,7 +4,7 @@ import {
   KeyRound,
   HardDrive,
   Database,
-  MessageSquare,
+  Mail,
   RotateCw,
   Trash2,
   AlertTriangle,
@@ -228,17 +228,17 @@ export const SystemDiagnosticPage: React.FC<SystemDiagnosticPageProps> = ({ toke
                 <p className="text-[10px] text-slate-400">Idempotency protection verified</p>
               </div>
 
-              {/* WhatsApp Cloud API */}
+              {/* Email Delivery SMTP */}
               <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/5 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-bold text-white">
-                    <MessageSquare className="w-4 h-4 text-emerald-400" />
-                    <span>WhatsApp Cloud API</span>
+                    <Mail className="w-4 h-4 text-emerald-400" />
+                    <span>Layanan Email (SMTP)</span>
                   </div>
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 </div>
-                <p className="text-[11px] text-emerald-300 font-medium">Meta Verified Platform</p>
-                <p className="text-[10px] text-slate-400">Template pesan resmi terdaftar</p>
+                <p className="text-[11px] text-emerald-300 font-medium">Nodemailer SMTP Active</p>
+                <p className="text-[10px] text-slate-400">Pengiriman soft file galeri otomatis</p>
               </div>
 
               {/* Storage Retention */}

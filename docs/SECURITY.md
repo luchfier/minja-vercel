@@ -197,10 +197,13 @@ MIDTRANS_SERVER_KEY=<server-key-dari-dashboard-midtrans>
 MIDTRANS_CLIENT_KEY=<client-key-dari-dashboard-midtrans>
 MIDTRANS_IS_PRODUCTION=false
 
-# WhatsApp Cloud API
-WHATSAPP_ACCESS_TOKEN=<token-dari-meta-dashboard>
-WHATSAPP_PHONE_NUMBER_ID=<phone-number-id>
-WHATSAPP_BUSINESS_ACCOUNT_ID=<business-account-id>
+# Email SMTP Delivery
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=noreply@minjaphotobooth.com
+SMTP_PASS=app-specific-password
+SMTP_FROM="Minja Photobooth <noreply@minjaphotobooth.com>"
 
 # Object Storage
 S3_ENDPOINT=<endpoint-url>
@@ -230,7 +233,7 @@ LOG_LEVEL=info
 |------|----------|---------|
 | Midtrans Server Key | ❌ | ✅ |
 | Midtrans Client Key | ❌ | ✅ |
-| WhatsApp Access Token | ❌ | ✅ |
+| Kredensial SMTP Email | ❌ | ✅ |
 | S3 Secret Key | ❌ | ✅ |
 | JWT Secret | ❌ | ✅ |
 | Database Password | ❌ | ✅ |
@@ -292,7 +295,7 @@ const CORS_CONFIG = {
 | `POST /api/admin/login` | 5 requests | 10 menit (+ lockout) |
 | `POST /api/webhooks/midtrans` | 60 requests | 1 menit |
 | `POST /api/payments` | 10 requests | 1 menit |
-| `POST /api/delivery/whatsapp` | 5 requests | 1 menit |
+| `POST /api/sessions/:sessionId/email` | 5 requests | 1 menit |
 | Endpoint lainnya | 100 requests | 1 menit |
 
 ### 6.3 Helmet & Headers

@@ -25,6 +25,7 @@ import {
   Copy,
   AlertTriangle,
   CheckCircle2,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { TemplateItem } from '../../types/template';
 import { FilterPreset, PhotoAdjustment, SlotAdjustment, StickerElement, TextElement } from '../../types/editor';
@@ -41,6 +42,7 @@ import { Modal } from '../../components/common/Modal';
 import { ConfirmationDialog } from '../../components/common/ConfirmationDialog';
 import { SessionTimerBadge } from '../../components/customer/SessionTimerBadge';
 import { playButtonSound } from '../../services/soundEffects';
+import { PhotoEngine } from '../../photo-engine';
 
 export interface SavedFrameDesignItem {
   id: string;
@@ -196,6 +198,9 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
     id: string;
   } | null>(null);
 
+  // Active slot index for touchscreen photo picker dialog
+  const [pickingForSlot, setPickingForSlot] = useState<number | null>(null);
+
   // Dynamic Studio Assets from Admin Backend
   const [availableFonts, setAvailableFonts] = useState<FontItem[]>([]);
   const [availableStickers, setAvailableStickers] = useState<StickerItem[]>([]);
@@ -241,6 +246,10 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
         if (stickersRes.success && stickersRes.data && stickersRes.data.length > 0) {
           setAvailableStickers(stickersRes.data);
         }
+        // Pre-warm / decode foto sesi pelanggan ke memori PhotoEngine
+        if (allPhotos.length > 0) {
+          PhotoEngine.preloadSession(allPhotos);
+        }
       } catch (err) {
         console.warn('Failed to load dynamic studio assets:', err);
       }
@@ -267,11 +276,26 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
   // Slot photo assignment handlers
   const handleAssignPhotoToSlot = (slotIndex: number, photoUrl: string) => {
     playButtonSound('secondary');
-    setSlotPhotoMap((prev) => ({
-      ...prev,
-      [slotIndex]: photoUrl,
-    }));
-    setSelectedSlotIndex(slotIndex);
+    const nextMap = { ...slotPhotoMap, [slotIndex]: photoUrl };
+    setSlotPhotoMap(nextMap);
+
+    // Synchronize active design immediately
+    setDesigns((prev) =>
+      prev.map((d) => (d.id === activeDesignId ? { ...d, slotPhotoMap: nextMap } : d))
+    );
+
+    // Auto-advance to the next empty slot so sequential taps fill all slots effortlessly
+    if (selectedTemplate) {
+      const nextEmpty = selectedTemplate.slots.findIndex((_, idx) => idx !== slotIndex && !nextMap[idx]);
+      if (nextEmpty !== -1) {
+        setSelectedSlotIndex(nextEmpty);
+      } else {
+        setSelectedSlotIndex((slotIndex + 1) % selectedTemplate.slots.length);
+      }
+    } else {
+      setSelectedSlotIndex(slotIndex);
+    }
+
     showToast({
       type: 'success',
       title: 'Foto Terpasang!',
@@ -281,15 +305,35 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
 
   const handleClearSlot = (slotIndex: number) => {
     playButtonSound('delete');
-    setSlotPhotoMap((prev) => {
-      const next = { ...prev };
-      delete next[slotIndex];
-      return next;
-    });
+    const next = { ...slotPhotoMap };
+    delete next[slotIndex];
+    setSlotPhotoMap(next);
+    setDesigns((prev) =>
+      prev.map((d) => (d.id === activeDesignId ? { ...d, slotPhotoMap: next } : d))
+    );
     showToast({
       type: 'info',
       title: 'Slot Dikosongkan',
       message: `Foto di Slot #${slotIndex + 1} dilepas.`,
+    });
+  };
+
+  const handleSwapSlots = (slotA: number, slotB: number) => {
+    if (slotA === slotB) return;
+    playButtonSound('secondary');
+    const next = { ...slotPhotoMap };
+    const photoA = next[slotA];
+    const photoB = next[slotB];
+    if (photoB) next[slotA] = photoB; else delete next[slotA];
+    if (photoA) next[slotB] = photoA; else delete next[slotB];
+    setSlotPhotoMap(next);
+    setDesigns((prev) =>
+      prev.map((d) => (d.id === activeDesignId ? { ...d, slotPhotoMap: next } : d))
+    );
+    showToast({
+      type: 'info',
+      title: 'Posisi Foto Ditukar!',
+      message: `Foto Slot #${slotA + 1} dan Slot #${slotB + 1} berhasil ditukar posisinya.`,
     });
   };
 
@@ -303,20 +347,56 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
       }
     });
     setSlotPhotoMap(nextMap);
+    setDesigns((prev) =>
+      prev.map((d) => (d.id === activeDesignId ? { ...d, slotPhotoMap: nextMap } : d))
+    );
     showToast({
       type: 'success',
-      title: 'Auto Fill Selesai',
-      message: 'Foto sesi telah dipasangkan ke frame berurutan.',
+      title: 'Auto Isi Selesai',
+      message: 'Foto sesi telah dipasangkan ke frame secara berurutan.',
     });
   };
 
   const handleClearAllSlots = () => {
     playButtonSound('delete');
     setSlotPhotoMap({});
+    setDesigns((prev) =>
+      prev.map((d) => (d.id === activeDesignId ? { ...d, slotPhotoMap: {} } : d))
+    );
     showToast({
       type: 'info',
       title: 'Frame Dikosongkan',
       message: 'Semua slot frame kini kosong. Sentuh foto di kiri untuk memasang.',
+    });
+  };
+
+  const handleSelectTemplate = (newTemplate: TemplateItem) => {
+    playButtonSound('secondary');
+    setSelectedTemplate(newTemplate);
+
+    // Retain existing assigned photos in slots, and auto-fill any extra slots with allPhotos
+    const nextMap: Record<number, string> = {};
+    newTemplate.slots.forEach((_, idx) => {
+      if (slotPhotoMap[idx]) {
+        nextMap[idx] = slotPhotoMap[idx];
+      } else if (allPhotos[idx]) {
+        nextMap[idx] = allPhotos[idx];
+      }
+    });
+
+    setSlotPhotoMap(nextMap);
+    setSelectedSlotIndex(0);
+
+    setDesigns((prev) =>
+      prev.map((d) =>
+        d.id === activeDesignId ? { ...d, template: newTemplate, slotPhotoMap: nextMap } : d
+      )
+    );
+    pushHistory({ templateId: newTemplate.id });
+    showToast({
+      type: 'info',
+      title: 'Bingkai Dipilih!',
+      message: `Menggunakan layout bingkai "${newTemplate.name}".`,
     });
   };
 
@@ -329,14 +409,20 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
         const match = res.data.find((t) => t.id === initialTemplateId) || res.data[0];
         setSelectedTemplate(match);
 
-        // Do NOT auto-fill frame slots: let the user freely insert photos themselves one by one
-        setSlotPhotoMap({});
+        // Auto-fill frame slots with customer's captured photos by default so they immediately see their photos
+        const autoMap: Record<number, string> = {};
+        match.slots.forEach((_, idx) => {
+          if (allPhotos[idx]) {
+            autoMap[idx] = allPhotos[idx];
+          }
+        });
+        setSlotPhotoMap(autoMap);
 
         const firstDesign: FrameDesignState = {
           id: `design-${Date.now()}-1`,
           title: 'Desain Frame #1',
           template: match,
-          slotPhotoMap: {},
+          slotPhotoMap: autoMap,
           slotAdjustments: {},
           activeFilter: 'normal',
           adjustments: { brightness: 0, contrast: 0, rotation: 0 },
@@ -814,11 +900,18 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
     const newIndex = designs.length + 1;
     const newId = `design-${Date.now()}-${newIndex}`;
 
+    const autoMap: Record<number, string> = {};
+    selectedTemplate.slots.forEach((_, idx) => {
+      if (allPhotos[idx]) {
+        autoMap[idx] = allPhotos[idx];
+      }
+    });
+
     const newDesign: FrameDesignState = {
       id: newId,
       title: `Desain Frame #${newIndex}`,
       template: selectedTemplate,
-      slotPhotoMap: {},
+      slotPhotoMap: autoMap,
       slotAdjustments: {},
       activeFilter: 'normal',
       adjustments: { brightness: 0, contrast: 0, rotation: 0 },
@@ -945,20 +1038,44 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
     handleProceedWithAllDesigns();
   };
 
-  const handleProceedWithAllDesigns = () => {
+  const handleProceedWithAllDesigns = async () => {
     saveActiveDesignToState();
 
-    const compiledDesigns: SavedFrameDesignItem[] = designs.map((d, idx) => {
-      const isCurrentActive = d.id === activeDesignId;
-      const finalUrl = isCurrentActive ? (renderedLayoutUrl || d.renderedDataUrl) : d.renderedDataUrl;
-      return {
-        id: d.id,
-        title: d.title || `Desain Frame #${idx + 1}`,
-        layoutUrl: finalUrl || (allPhotos[0] || ''),
-        templateName: d.template?.name || selectedTemplate?.name,
-        slotsCount: d.template?.slots?.length || selectedTemplate?.slots?.length,
-      };
-    }).filter((item) => Boolean(item.layoutUrl));
+    const compiledDesigns: SavedFrameDesignItem[] = (
+      await Promise.all(
+        designs.map(async (d, idx) => {
+          const isCurrentActive = d.id === activeDesignId;
+          let finalUrl = isCurrentActive ? (renderedLayoutUrl || d.renderedDataUrl) : d.renderedDataUrl;
+
+          // Jika desain frame belum ter-render (misal desain di latar belakang), ekspor secara headless via PhotoEngine 300 DPI
+          if (!finalUrl && d.template) {
+            try {
+              const photoUrls = d.template.slots.map((_, i) => d.slotPhotoMap[i] || '');
+              const res = await PhotoEngine.exportPrintReady({
+                template: d.template,
+                photoUrls,
+                filter: d.activeFilter,
+                adjustments: d.adjustments,
+                slotAdjustments: d.slotAdjustments,
+                stickers: d.stickers,
+                texts: d.texts,
+              });
+              finalUrl = res.dataUrl;
+            } catch (err) {
+              console.warn('[PhotoEditorScreen] Gagal headless render frame design:', err);
+            }
+          }
+
+          return {
+            id: d.id,
+            title: d.title || `Desain Frame #${idx + 1}`,
+            layoutUrl: finalUrl || (allPhotos[0] || ''),
+            templateName: d.template?.name || selectedTemplate?.name,
+            slotsCount: d.template?.slots?.length || selectedTemplate?.slots?.length,
+          };
+        })
+      )
+    ).filter((item) => Boolean(item.layoutUrl));
 
     if (compiledDesigns.length === 0) {
       compiledDesigns.push({
@@ -1090,7 +1207,8 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
                     if (selectedSlotIndex !== null) {
                       handleAssignPhotoToSlot(selectedSlotIndex, photoUrl);
                     } else {
-                      handleAssignPhotoToSlot(0, photoUrl);
+                      const firstEmpty = selectedTemplate.slots.findIndex((_, idx) => !slotPhotoMap[idx]);
+                      handleAssignPhotoToSlot(firstEmpty !== -1 ? firstEmpty : 0, photoUrl);
                     }
                   }}
                   className={`group relative rounded-2xl glass-panel p-2 border transition-all cursor-grab active:cursor-grabbing hover:border-sky-400/60 hover:shadow-glow-primary ${isAssigned ? 'border-emerald-500/40 bg-emerald-950/20' : 'border-white/10'
@@ -1258,14 +1376,15 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
             <div className="flex items-center gap-2 p-2 rounded-2xl glass-panel border border-white/10 overflow-x-auto custom-scrollbar">
               <span className="text-[11px] font-bold text-slate-400 px-1 flex items-center gap-1 whitespace-nowrap">
                 <Crop className="w-3.5 h-3.5 text-sky-400" />
-                <span>Pilih Slot Frame:</span>
+                <span>Slot Frame:</span>
               </span>
               {selectedTemplate.slots.map((_, idx) => {
                 const isSelected = selectedSlotIndex === idx;
                 const slotFilter = slotAdjustments[idx]?.filter || activeFilter;
-                const hasPhoto = Boolean(slotPhotoMap[idx]);
+                const photoUrl = slotPhotoMap[idx];
+                const hasPhoto = Boolean(photoUrl);
                 return (
-                  <div key={idx} className="flex items-center">
+                  <div key={idx} className="flex items-center gap-1">
                     <button
                       type="button"
                       onClick={() => {
@@ -1274,40 +1393,97 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
                         if (activeTab === 'sticker' || activeTab === 'text') {
                           setActiveTab('frame');
                         }
+                        if (!hasPhoto) {
+                          setPickingForSlot(idx);
+                        }
                       }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 touch-manipulation whitespace-nowrap ${isSelected
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 active:scale-95 touch-manipulation whitespace-nowrap ${
+                        isSelected
                           ? 'bg-sky-400 text-slate-950 shadow-glow-primary ring-2 ring-white scale-105'
                           : hasPhoto
                             ? 'glass-panel text-white border-emerald-500/40 bg-emerald-950/20'
-                            : 'glass-panel text-slate-400 hover:text-white border-dashed border-white/20'
-                        }`}
+                            : 'glass-panel text-amber-300 hover:text-white border-dashed border-amber-400/40 bg-amber-500/10'
+                      }`}
+                      title={hasPhoto ? `Slot #${idx + 1} (Terisi foto)` : `Slot #${idx + 1} (Kosong - sentuh untuk pasang foto)`}
                     >
-                      <span>Slot #{idx + 1}</span>
+                      {/* Slot Mini Thumbnail or Indicator */}
                       {hasPhoto ? (
-                        <span className="w-2 h-2 rounded-full bg-emerald-400" title="Foto terpasang" />
+                        <div className="w-5 h-5 rounded-md overflow-hidden bg-slate-950 border border-white/20 flex-shrink-0">
+                          <img src={photoUrl} alt={`Foto Slot #${idx + 1}`} className="w-full h-full object-cover" />
+                        </div>
                       ) : (
-                        <span className="w-2 h-2 rounded-full bg-amber-400/60 animate-pulse" title="Slot kosong" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
                       )}
+
+                      <span>Slot #{idx + 1}</span>
+
+                      {hasPhoto ? (
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-300">
+                          Terisi
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-400/25 text-amber-300">
+                          + Pasang
+                        </span>
+                      )}
+
                       {slotFilter !== 'normal' && (
                         <span className="w-2 h-2 rounded-full bg-amber-400" title={`Filter: ${slotFilter}`} />
                       )}
                     </button>
+
                     {hasPhoto && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleClearSlot(idx);
-                        }}
-                        className="p-1 text-slate-400 hover:text-rose-400 active:scale-90 transition-colors ml-0.5"
-                        title={`Lepas foto dari Slot #${idx + 1}`}
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedSlotIndex(idx);
+                            setPickingForSlot(idx);
+                          }}
+                          className="px-2 py-1 rounded-lg glass-panel hover:bg-sky-400/20 text-sky-300 text-[10px] font-black border border-sky-400/30 active:scale-90 transition-all"
+                          title={`Ganti foto di Slot #${idx + 1}`}
+                        >
+                          Ganti
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleClearSlot(idx);
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-400 active:scale-90 transition-colors"
+                          title={`Lepas foto dari Slot #${idx + 1}`}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
               })}
+
+              {/* Quick Swap Button if template has multiple slots */}
+              {selectedTemplate.slots.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedTemplate.slots.length === 2) {
+                      handleSwapSlots(0, 1);
+                    } else if (selectedSlotIndex !== null) {
+                      const nextTarget = (selectedSlotIndex + 1) % selectedTemplate.slots.length;
+                      handleSwapSlots(selectedSlotIndex, nextTarget);
+                    } else {
+                      handleSwapSlots(0, 1);
+                    }
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 text-amber-300 text-xs font-bold flex items-center gap-1.5 border border-amber-400/30 active:scale-95 transition-all whitespace-nowrap ml-1"
+                  title="Tukar posisi foto antar slot"
+                >
+                  <ArrowLeftRight className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Tukar Posisi</span>
+                </button>
+              )}
             </div>
 
             {/* Clean instruction banner placed outside and above the canvas frame */}
@@ -1316,7 +1492,7 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
                 <>
                   <Crop className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
                   <span className="truncate">
-                    <strong className="text-sky-300">Slot #{selectedSlotIndex + 1}:</strong> Sentuh foto di kiri untuk pasang • Geser di canvas untuk crop
+                    <strong className="text-sky-300">Slot #{selectedSlotIndex + 1}:</strong> Sentuh foto di kiri untuk pasang • Sentuh canvas untuk ganti foto • Geser untuk crop
                   </span>
                 </>
               ) : selectedElement ? (
@@ -1330,7 +1506,7 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
                 <>
                   <Sparkles className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
                   <span className="truncate">
-                    Sentuh foto di panel kiri untuk isi frame • Drag & drop langsung ke slot frame
+                    Sentuh foto di panel kiri untuk isi frame • Sentuh langsung slot di kanvas
                   </span>
                 </>
               )}
@@ -1347,6 +1523,10 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
               slotAdjustments={slotAdjustments}
               selectedSlotIndex={selectedSlotIndex}
               onSelectSlot={handleSelectSlotFromCanvas}
+              onSlotTap={(slotIdx) => {
+                setSelectedSlotIndex(slotIdx);
+                setPickingForSlot(slotIdx);
+              }}
               onUpdateSlotAdjustment={handleUpdateSlotAdj}
               onDropPhotoOnSlot={handleAssignPhotoToSlot}
               stickers={stickers}
@@ -1437,7 +1617,16 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
             {/* TAB 1: BINGKAI & CROP FOTO */}
             {activeTab === 'frame' && (
               <div className="space-y-4">
-                {/* Crop & Resize Specific Photo Card */}
+                {/* 1. Pilihan Desain Bingkai & Susunan Foto */}
+                <TemplateSelector
+                  templates={templates}
+                  selectedTemplateId={selectedTemplate.id}
+                  onSelectTemplate={handleSelectTemplate}
+                  slotPhotoMap={slotPhotoMap}
+                  previewPhotos={allPhotos}
+                />
+
+                {/* 2. Crop & Resize Specific Photo Card */}
                 {selectedSlotIndex !== null ? (
                   <div className="glass-panel rounded-2xl p-4 border border-sky-400/40 shadow-glow-primary space-y-3.5">
                     <div className="flex items-center justify-between">
@@ -1583,22 +1772,6 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
                     </p>
                   </div>
                 )}
-
-                {/* Pilih Bingkai Cetak */}
-                <div className="space-y-2 pt-2 border-t border-white/10">
-                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-400">
-                    <Layout className="w-4 h-4" />
-                    <span>Pilih Bingkai Cetak</span>
-                  </div>
-                  <TemplateSelector
-                    templates={templates}
-                    selectedTemplateId={selectedTemplate.id}
-                    onSelectTemplate={(tpl) => {
-                      setSelectedTemplate(tpl);
-                      pushHistory({ templateId: tpl.id });
-                    }}
-                  />
-                </div>
               </div>
             )}
 
@@ -2027,6 +2200,12 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
         }}
         templateName={selectedTemplate.name}
         slotCount={selectedTemplate.slots.length}
+        orientation={
+          selectedTemplate.layoutType === '4R_LANDSCAPE' ||
+          (selectedTemplate.width && selectedTemplate.height && selectedTemplate.width > selectedTemplate.height)
+            ? 'landscape'
+            : 'portrait'
+        }
       >
         <CanvasEditor
           template={selectedTemplate}
@@ -2135,6 +2314,123 @@ export const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
               <span>Lanjut ke Sesi Cetak Foto ({timeoutCountdown}s)</span>
               <ArrowRight className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Touchscreen Slot Photo Picker Modal (Muncul saat user menyentuh slot di kanvas atau tombol Ganti/Pasang) */}
+      <Modal
+        isOpen={pickingForSlot !== null}
+        onClose={() => setPickingForSlot(null)}
+        title={
+          pickingForSlot !== null
+            ? `Pilih Foto untuk Slot #${pickingForSlot + 1}`
+            : 'Pilih Foto'
+        }
+        maxWidth="lg"
+      >
+        <div className="p-5 space-y-4 select-none">
+          <div className="flex items-center justify-between pb-2 border-b border-white/10">
+            <p className="text-xs text-slate-300">
+              Sentuh salah satu foto sesi di bawah untuk langsung memasukkannya ke{' '}
+              <strong className="text-sky-400">
+                Slot #{pickingForSlot !== null ? pickingForSlot + 1 : 1}
+              </strong>
+            </p>
+            {pickingForSlot !== null && slotPhotoMap[pickingForSlot] && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleClearSlot(pickingForSlot);
+                  setPickingForSlot(null);
+                }}
+                className="px-2.5 py-1 rounded-xl bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 text-xs font-bold border border-rose-500/40 active:scale-95 transition-all"
+              >
+                Kosongkan Slot Ini
+              </button>
+            )}
+          </div>
+
+          {/* Grid of all captured photos with large touchable targets */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5 max-h-[58vh] overflow-y-auto p-1 custom-scrollbar">
+            {allPhotos.map((photoUrl, pIdx) => {
+              const isCurrentlyInThisSlot =
+                pickingForSlot !== null && slotPhotoMap[pickingForSlot] === photoUrl;
+
+              const assignedSlots = selectedTemplate.slots
+                .map((_, sIdx) => (slotPhotoMap[sIdx] === photoUrl ? sIdx + 1 : null))
+                .filter((n): n is number => n !== null);
+
+              return (
+                <button
+                  key={pIdx}
+                  type="button"
+                  onClick={() => {
+                    if (pickingForSlot !== null) {
+                      handleAssignPhotoToSlot(pickingForSlot, photoUrl);
+                      setPickingForSlot(null);
+                    }
+                  }}
+                  className={`group relative rounded-2xl p-2 border-2 transition-all active:scale-95 text-left flex flex-col gap-2 ${
+                    isCurrentlyInThisSlot
+                      ? 'border-emerald-400 bg-emerald-500/20 shadow-glow-primary scale-102 ring-2 ring-emerald-300'
+                      : assignedSlots.length > 0
+                        ? 'border-sky-400/40 bg-sky-950/20 hover:border-sky-400'
+                        : 'border-white/10 glass-panel hover:border-amber-400/60'
+                  }`}
+                >
+                  <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-slate-950 border border-white/10">
+                    <img
+                      src={photoUrl}
+                      alt={`Foto Sesi #${pIdx + 1}`}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 pointer-events-none"
+                    />
+
+                    {/* Photo index badge */}
+                    <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-lg bg-slate-950/85 backdrop-blur-md border border-white/20 text-[11px] font-black text-white shadow-md">
+                      #{pIdx + 1}
+                    </div>
+
+                    {/* Status badge */}
+                    <div className="absolute top-1.5 right-1.5">
+                      {isCurrentlyInThisSlot ? (
+                        <div className="px-2 py-0.5 rounded-lg bg-emerald-400 text-slate-950 text-[10px] font-black flex items-center gap-1 shadow-md">
+                          <Check className="w-3 h-3 stroke-[3]" />
+                          <span>Slot Ini</span>
+                        </div>
+                      ) : assignedSlots.length > 0 ? (
+                        <div className="px-2 py-0.5 rounded-lg bg-slate-900/90 text-sky-300 text-[10px] font-bold border border-sky-400/30">
+                          Slot {assignedSlots.join(', ')}
+                        </div>
+                      ) : (
+                        <div className="px-2 py-0.5 rounded-lg bg-slate-900/85 text-slate-400 text-[10px] font-bold border border-white/20">
+                          Bebas
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between px-0.5">
+                    <span className="text-xs font-bold text-white">Foto #{pIdx + 1}</span>
+                    <span
+                      className={`text-[11px] font-black px-2 py-0.5 rounded-lg ${
+                        isCurrentlyInThisSlot
+                          ? 'bg-emerald-400 text-slate-950'
+                          : 'bg-white/10 text-slate-300 group-hover:bg-amber-400 group-hover:text-slate-950'
+                      }`}
+                    >
+                      {isCurrentlyInThisSlot ? 'Terpasang' : 'Pilih Foto'}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="pt-2 flex justify-end">
+            <Button variant="ghost" size="md" onClick={() => setPickingForSlot(null)}>
+              Tutup
+            </Button>
           </div>
         </div>
       </Modal>

@@ -10,6 +10,10 @@ import {
   Trash2,
   Copy,
   AlignCenter,
+  RotateCw,
+  Magnet,
+  Crosshair,
+  Rows,
   CheckCircle,
   AlertCircle,
   Check,
@@ -18,6 +22,15 @@ import {
   Type,
   Image as ImageIcon,
   Edit3,
+  Move,
+  ZoomIn,
+  ZoomOut,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  Sliders,
+  Sparkles,
 } from 'lucide-react';
 import { photoboothApi } from '../../services/photoboothApi';
 import { TemplateItem, PhotoSlot } from '../../types/template';
@@ -139,9 +152,28 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
 
   // Interactive Canvas Preview Container inside Modal
   const previewBoxRef = useRef<HTMLDivElement>(null);
+  const [frameLayerMode, setFrameLayerMode] = useState<'edit' | 'preview'>('edit');
+  const [frameOpacity, setFrameOpacity] = useState<number>(0.85);
+  const [showCoordinatesManual, setShowCoordinatesManual] = useState<boolean>(false);
+  const [enableMagneticSnap, setEnableMagneticSnap] = useState<boolean>(true);
+  const [activeGuides, setActiveGuides] = useState<{ x?: number; y?: number }>({});
+  const [canvasDragState, setCanvasDragState] = useState<{
+    mode: 'move' | 'resize';
+    slotIndex: number;
+    initialPointerX: number;
+    initialPointerY: number;
+    initialSlotX: number;
+    initialSlotY: number;
+    initialSlotW: number;
+    initialSlotH: number;
+  } | null>(null);
 
   // Delete Template Confirmation State
   const [deletingTemplate, setDeletingTemplate] = useState<TemplateItem | null>(null);
+
+  // Inspector Preview Mode ('slots' shows slot locations on top of frame, 'preview' shows actual print)
+  const [inspectorMode, setInspectorMode] = useState<'slots' | 'preview'>('slots');
+  const [inspectorFrameOpacity, setInspectorFrameOpacity] = useState<number>(0.85);
 
   // ================= STICKERS STATE =================
   const [adminStickers, setAdminStickers] = useState<StickerItem[]>([]);
@@ -351,6 +383,362 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
     }));
   };
 
+  // Center vertically
+  const handleCenterVertical = (index: number) => {
+    const canvasH = importForm.height || 1800;
+    setImportForm((prev) => ({
+      ...prev,
+      slots: prev.slots.map((s, idx) => {
+        if (idx !== index) return s;
+        return {
+          ...s,
+          y: Math.round((canvasH - s.height) / 2),
+        };
+      }),
+    }));
+  };
+
+  // Center both horizontally & vertically
+  const handleCenterBoth = (index: number) => {
+    const canvasW = importForm.width || 1200;
+    const canvasH = importForm.height || 1800;
+    setImportForm((prev) => ({
+      ...prev,
+      slots: prev.slots.map((s, idx) => {
+        if (idx !== index) return s;
+        return {
+          ...s,
+          x: Math.round((canvasW - s.width) / 2),
+          y: Math.round((canvasH - s.height) / 2),
+        };
+      }),
+    }));
+  };
+
+  // Rotate slot 90 degrees (swap width & height)
+  const handleRotateSlot = (index: number) => {
+    setImportForm((prev) => {
+      const slot = prev.slots[index];
+      if (!slot) return prev;
+      const canvasW = prev.width || 1200;
+      const canvasH = prev.height || 1800;
+
+      let newW = slot.height;
+      let newH = slot.width;
+
+      if (newW > canvasW - 20) {
+        const ratio = newH / newW;
+        newW = canvasW - 20;
+        newH = Math.round(newW * ratio);
+      }
+      if (newH > canvasH - 20) {
+        const ratio = newW / newH;
+        newH = canvasH - 20;
+        newW = Math.round(newH * ratio);
+      }
+
+      const centerX = slot.x + slot.width / 2;
+      const centerY = slot.y + slot.height / 2;
+      let newX = Math.round(centerX - newW / 2);
+      let newY = Math.round(centerY - newH / 2);
+
+      newX = Math.max(0, Math.min(canvasW - newW, newX));
+      newY = Math.max(0, Math.min(canvasH - newH, newY));
+
+      return {
+        ...prev,
+        slots: prev.slots.map((s, idx) =>
+          idx === index ? { ...s, width: newW, height: newH, x: newX, y: newY } : s
+        ),
+      };
+    });
+  };
+
+  // Set slot Aspect Ratio (3:2, 4:3, 1:1, 16:9)
+  const handleSetAspectRatio = (index: number, ratioW: number, ratioH: number) => {
+    setImportForm((prev) => {
+      const slot = prev.slots[index];
+      if (!slot) return prev;
+      const canvasH = prev.height || 1800;
+      let newH = Math.round((slot.width * ratioH) / ratioW);
+      let newW = slot.width;
+
+      if (newH > canvasH - 40) {
+        newH = canvasH - 40;
+        newW = Math.round((newH * ratioW) / ratioH);
+      }
+
+      const centerY = slot.y + slot.height / 2;
+      let newY = Math.round(centerY - newH / 2);
+      newY = Math.max(0, Math.min(canvasH - newH, newY));
+
+      return {
+        ...prev,
+        slots: prev.slots.map((s, idx) =>
+          idx === index ? { ...s, width: newW, height: newH, y: newY } : s
+        ),
+      };
+    });
+  };
+
+
+
+  // Match all slots dimensions to active slot
+  const handleMatchAllToActive = (dim: 'both' | 'width' | 'height') => {
+    setImportForm((prev) => {
+      const target = prev.slots[activeSlotIdx];
+      if (!target) return prev;
+      const canvasW = prev.width || 1200;
+      const canvasH = prev.height || 1800;
+
+      return {
+        ...prev,
+        slots: prev.slots.map((s, idx) => {
+          if (idx === activeSlotIdx) return s;
+          const newW = dim === 'height' ? s.width : target.width;
+          const newH = dim === 'width' ? s.height : target.height;
+          const clampedX = Math.min(canvasW - newW, s.x);
+          const clampedY = Math.min(canvasH - newH, s.y);
+          return {
+            ...s,
+            width: newW,
+            height: newH,
+            x: Math.max(0, clampedX),
+            y: Math.max(0, clampedY),
+          };
+        }),
+      };
+    });
+  };
+
+  // Reorder slot in list (move up / down)
+  const handleReorderSlot = (index: number, direction: 'up' | 'down') => {
+    setImportForm((prev) => {
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= prev.slots.length) return prev;
+      const newSlots = [...prev.slots];
+      const temp = newSlots[index];
+      newSlots[index] = newSlots[targetIndex];
+      newSlots[targetIndex] = temp;
+      return { ...prev, slots: newSlots };
+    });
+    setActiveSlotIdx((prev) => (direction === 'up' ? Math.max(0, prev - 1) : Math.min(importForm.slots.length - 1, prev + 1)));
+  };
+
+  // Interactive Drag & Resize Handlers
+  const handleSlotPointerDown = (
+    e: React.PointerEvent,
+    index: number,
+    mode: 'move' | 'resize'
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActiveSlotIdx(index);
+
+    const slot = importForm.slots[index];
+    if (!slot) return;
+
+    if (previewBoxRef.current) {
+      try {
+        previewBoxRef.current.setPointerCapture(e.pointerId);
+      } catch {
+        // safe fallback
+      }
+    }
+
+    setCanvasDragState({
+      mode,
+      slotIndex: index,
+      initialPointerX: e.clientX,
+      initialPointerY: e.clientY,
+      initialSlotX: slot.x,
+      initialSlotY: slot.y,
+      initialSlotW: slot.width,
+      initialSlotH: slot.height,
+    });
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent) => {
+    if (!canvasDragState) return;
+    e.preventDefault();
+
+    const previewBox = previewBoxRef.current;
+    if (!previewBox) return;
+
+    const rect = previewBox.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
+    const scaleX = (importForm.width || 1200) / rect.width;
+    const scaleY = (importForm.height || 1800) / rect.height;
+
+    const deltaX = (e.clientX - canvasDragState.initialPointerX) * scaleX;
+    const deltaY = (e.clientY - canvasDragState.initialPointerY) * scaleY;
+
+    setImportForm((prev) => {
+      const modalW = prev.width || 1200;
+      const modalH = prev.height || 1800;
+
+      const updatedSlots = prev.slots.map((s, idx) => {
+        if (idx !== canvasDragState.slotIndex) return s;
+
+        if (canvasDragState.mode === 'move') {
+          const maxX = Math.max(0, modalW - s.width);
+          const maxY = Math.max(0, modalH - s.height);
+          let rawX = Math.round(Math.max(0, Math.min(maxX, canvasDragState.initialSlotX + deltaX)));
+          let rawY = Math.round(Math.max(0, Math.min(maxY, canvasDragState.initialSlotY + deltaY)));
+
+          let guideX: number | undefined = undefined;
+          let guideY: number | undefined = undefined;
+
+          if (enableMagneticSnap) {
+            const snapThreshold = 20;
+
+            // 1. Center of Canvas Horizontal
+            const centerH = Math.round((modalW - s.width) / 2);
+            if (Math.abs(rawX - centerH) <= snapThreshold) {
+              rawX = centerH;
+              guideX = modalW / 2;
+            }
+
+            // 2. Center of Canvas Vertical
+            const centerV = Math.round((modalH - s.height) / 2);
+            if (Math.abs(rawY - centerV) <= snapThreshold) {
+              rawY = centerV;
+              guideY = modalH / 2;
+            }
+
+            // 3. Sibling slots alignment matching
+            prev.slots.forEach((sib, sIdx) => {
+              if (sIdx === canvasDragState.slotIndex) return;
+
+              // Sibling Left match
+              if (Math.abs(rawX - sib.x) <= snapThreshold) {
+                rawX = sib.x;
+                guideX = sib.x;
+              }
+              // Sibling Center X match
+              const sibCenterX = sib.x + sib.width / 2;
+              const myCenterX = rawX + s.width / 2;
+              if (Math.abs(myCenterX - sibCenterX) <= snapThreshold) {
+                rawX = Math.round(sibCenterX - s.width / 2);
+                guideX = sibCenterX;
+              }
+              // Sibling Right match
+              const sibRight = sib.x + sib.width;
+              if (Math.abs(rawX + s.width - sibRight) <= snapThreshold) {
+                rawX = sibRight - s.width;
+                guideX = sibRight;
+              }
+
+              // Sibling Top match
+              if (Math.abs(rawY - sib.y) <= snapThreshold) {
+                rawY = sib.y;
+                guideY = sib.y;
+              }
+              // Sibling Center Y match
+              const sibCenterY = sib.y + sib.height / 2;
+              const myCenterY = rawY + s.height / 2;
+              if (Math.abs(myCenterY - sibCenterY) <= snapThreshold) {
+                rawY = Math.round(sibCenterY - s.height / 2);
+                guideY = sibCenterY;
+              }
+              // Sibling Bottom match
+              const sibBottom = sib.y + sib.height;
+              if (Math.abs(rawY + s.height - sibBottom) <= snapThreshold) {
+                rawY = sibBottom - s.height;
+                guideY = sibBottom;
+              }
+            });
+          }
+
+          setActiveGuides({ x: guideX, y: guideY });
+          return { ...s, x: rawX, y: rawY };
+        }
+
+        if (canvasDragState.mode === 'resize') {
+          const maxW = modalW - s.x;
+          const maxH = modalH - s.y;
+          const newW = Math.round(Math.max(120, Math.min(maxW, canvasDragState.initialSlotW + deltaX)));
+          const newH = Math.round(Math.max(120, Math.min(maxH, canvasDragState.initialSlotH + deltaY)));
+          return { ...s, width: newW, height: newH };
+        }
+
+        return s;
+      });
+
+      return { ...prev, slots: updatedSlots };
+    });
+  };
+
+  const handleCanvasPointerUp = (e: React.PointerEvent) => {
+    setActiveGuides({});
+    if (canvasDragState) {
+      setCanvasDragState(null);
+      if (previewBoxRef.current) {
+        try {
+          previewBoxRef.current.releasePointerCapture(e.pointerId);
+        } catch {
+          // safe fallback
+        }
+      }
+    }
+  };
+
+  // Scale slot up or down (+10% / -10%)
+  const handleScaleSlot = (index: number, multiplier: number) => {
+    setImportForm((prev) => {
+      const slot = prev.slots[index];
+      if (!slot) return prev;
+      const modalW = prev.width || 1200;
+      const modalH = prev.height || 1800;
+      const newW = Math.round(Math.max(120, Math.min(modalW - 20, slot.width * multiplier)));
+      const newH = Math.round(Math.max(120, Math.min(modalH - 20, slot.height * multiplier)));
+      const deltaW = newW - slot.width;
+      const deltaH = newH - slot.height;
+      const newX = Math.max(0, Math.min(modalW - newW, Math.round(slot.x - deltaW / 2)));
+      const newY = Math.max(0, Math.min(modalH - newH, Math.round(slot.y - deltaH / 2)));
+
+      return {
+        ...prev,
+        slots: prev.slots.map((s, i) => (i === index ? { ...s, width: newW, height: newH, x: newX, y: newY } : s)),
+      };
+    });
+  };
+
+  // Nudge slot position by delta X and delta Y (e.g. 20px)
+  const handleNudgeSlot = (index: number, dx: number, dy: number) => {
+    setImportForm((prev) => {
+      const slot = prev.slots[index];
+      if (!slot) return prev;
+      const modalW = prev.width || 1200;
+      const modalH = prev.height || 1800;
+      const newX = Math.round(Math.max(0, Math.min(modalW - slot.width, slot.x + dx)));
+      const newY = Math.round(Math.max(0, Math.min(modalH - slot.height, slot.y + dy)));
+
+      return {
+        ...prev,
+        slots: prev.slots.map((s, i) => (i === index ? { ...s, x: newX, y: newY } : s)),
+      };
+    });
+  };
+
+  // Adjust width or height
+  const handleAdjustDimension = (index: number, dw: number, dh: number) => {
+    setImportForm((prev) => {
+      const slot = prev.slots[index];
+      if (!slot) return prev;
+      const modalW = prev.width || 1200;
+      const modalH = prev.height || 1800;
+      const newW = Math.round(Math.max(120, Math.min(modalW - slot.x, slot.width + dw)));
+      const newH = Math.round(Math.max(120, Math.min(modalH - slot.y, slot.height + dh)));
+
+      return {
+        ...prev,
+        slots: prev.slots.map((s, i) => (i === index ? { ...s, width: newW, height: newH } : s)),
+      };
+    });
+  };
+
   // Open Create New Template Modal
   const handleOpenCreateModal = () => {
     setEditingTemplateId(null);
@@ -373,6 +761,10 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
   const handleOpenEditModal = (tpl: TemplateItem) => {
     setEditingTemplateId(tpl.id);
     setImportError('');
+    const loadedSlots = Array.isArray(tpl.slots) && tpl.slots.length > 0
+      ? JSON.parse(JSON.stringify(tpl.slots))
+      : JSON.parse(JSON.stringify(SLOT_PRESETS[0].slots));
+
     setImportForm({
       name: tpl.name,
       frameUrl: tpl.frameUrl || '',
@@ -380,7 +772,7 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
       layoutType: (tpl.layoutType as any) || '4R_PORTRAIT',
       width: tpl.width || 1200,
       height: tpl.height || 1800,
-      slots: tpl.slots ? JSON.parse(JSON.stringify(tpl.slots)) : [...SLOT_PRESETS[0].slots],
+      slots: loadedSlots,
     });
     setActiveSlotIdx(0);
     setIsImportModalOpen(true);
@@ -404,6 +796,17 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
       return;
     }
 
+    // Sanitize all slot values so they meet backend Zod validation (positive, integer, non-negative)
+    const sanitizedSlots: PhotoSlot[] = importForm.slots.map((s, idx) => ({
+      id: s.id || `s${idx + 1}`,
+      x: Math.max(0, Math.round(Number(s.x) || 0)),
+      y: Math.max(0, Math.round(Number(s.y) || 0)),
+      width: Math.max(50, Math.round(Number(s.width) || 100)),
+      height: Math.max(50, Math.round(Number(s.height) || 100)),
+      rotation: Math.round(Number(s.rotation) || 0),
+      layerIndex: 1,
+    }));
+
     setIsSavingTemplate(true);
     try {
       let res;
@@ -416,7 +819,7 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
           layoutType: importForm.layoutType,
           width: importForm.width || 1200,
           height: importForm.height || 1800,
-          slots: importForm.slots,
+          slots: sanitizedSlots,
           isActive: true,
         });
       } else {
@@ -428,14 +831,21 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
           layoutType: importForm.layoutType,
           width: importForm.width || 1200,
           height: importForm.height || 1800,
-          slots: importForm.slots,
+          slots: sanitizedSlots,
           isActive: true,
           isDefault: false,
         });
       }
 
       if (res.success) {
-        const savedTpl = res.data;
+        const savedTpl: TemplateItem = {
+          ...res.data,
+          slots: Array.isArray(res.data.slots) && res.data.slots.length > 0 ? res.data.slots : sanitizedSlots,
+          width: res.data.width || importForm.width || 1200,
+          height: res.data.height || importForm.height || 1800,
+          layoutType: res.data.layoutType || importForm.layoutType,
+          frameUrl: res.data.frameUrl || importForm.frameUrl,
+        };
         showToast({
           type: 'success',
           title: editingTemplateId ? 'Template Berhasil Diperbarui!' : 'Frame PNG Berhasil Disimpan!',
@@ -449,7 +859,17 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
           return [savedTpl, ...prev.filter((t) => t.id !== savedTpl.id)];
         });
         setSelectedTemplate(savedTpl);
-        loadTemplates();
+
+        // Silently sync background templates list without resetting selected template or showing global spinner
+        photoboothApi.getAdminTemplates(token).then((bgRes) => {
+          if (bgRes.success && bgRes.data) {
+            setTemplates(bgRes.data);
+            const found = bgRes.data.find((t) => t.id === savedTpl.id);
+            if (found) {
+              setSelectedTemplate(found);
+            }
+          }
+        }).catch(() => {});
       } else {
         const errorMsg = res.error?.message || 'Gagal menyimpan template ke server.';
         setImportError(errorMsg);
@@ -775,7 +1195,7 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                               )}
                             </h3>
                             <span className="text-[11px] text-slate-400">
-                              {tpl.slots.length} Slot Foto • {tpl.width || 1200}×{tpl.height || 1800} px
+                              {tpl.slots.length} Slot Foto • {tpl.layoutType === 'STRIP_2x6' ? '5 × 15 cm' : (tpl.width && tpl.height ? `${Math.round(tpl.width / 120)} × ${Math.round(tpl.height / 120)} cm` : '10 × 15 cm')}
                             </span>
                           </div>
 
@@ -799,7 +1219,7 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                             }}
                             className="bg-[#141B2D] border border-white/20 rounded-lg relative overflow-hidden shadow-inner flex items-center justify-center"
                           >
-                            {/* Slots */}
+                            {/* Slots (Displayed on top at z-20 so location is always clearly visible) */}
                             {tpl.slots.map((slot, idx) => {
                               const leftPct = (slot.x / (tpl.width || 1200)) * 100;
                               const topPct = (slot.y / (tpl.height || 1800)) * 100;
@@ -814,9 +1234,9 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                                     width: `${widthPct}%`,
                                     height: `${heightPct}%`,
                                   }}
-                                  className="absolute bg-sky-500/30 border border-sky-400/60 rounded-xs flex items-center justify-center"
+                                  className="absolute bg-sky-500/35 border border-sky-300 rounded-xs flex items-center justify-center z-20 pointer-events-none shadow-sm"
                                 >
-                                  <span className="text-[7px] font-bold text-sky-200">#{idx + 1}</span>
+                                  <span className="text-[7px] font-black text-sky-100 bg-slate-950/80 px-0.5 rounded leading-none">#{idx + 1}</span>
                                 </div>
                               );
                             })}
@@ -826,7 +1246,7 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                               <img
                                 src={tpl.frameUrl}
                                 alt="Frame Overlay"
-                                className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10"
+                                className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10 opacity-80"
                               />
                             )}
                           </div>
@@ -933,6 +1353,58 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                     </button>
                   </div>
 
+                  {/* Mode Tampilan Inspektor: Garis Slot Kanvas vs Hasil Cetak Asli */}
+                  <div className="w-full flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-white/10">
+                    <div className="flex items-center gap-1 p-0.5 rounded-xl bg-white/[0.05] border border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => setInspectorMode('slots')}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          inspectorMode === 'slots'
+                            ? 'bg-sky-500 text-slate-950 shadow-sm'
+                            : 'text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>Lokasi Kanvas Foto</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setInspectorMode('preview')}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          inspectorMode === 'preview'
+                            ? 'bg-amber-500 text-slate-950 shadow-sm'
+                            : 'text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Hasil Cetak Asli</span>
+                      </button>
+                    </div>
+
+                    {/* Frame Opacity quick toggle in slots mode */}
+                    {selectedTemplate.frameUrl && inspectorMode === 'slots' && (
+                      <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                        <span>Transparansi:</span>
+                        {[0.5, 0.85, 1.0].map((val) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setInspectorFrameOpacity(val)}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                              inspectorFrameOpacity === val
+                                ? 'bg-sky-400 text-slate-950'
+                                : 'bg-white/5 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {Math.round(val * 100)}%
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Large Visual Canvas Display with Frame PNG + Sample Photo Slots */}
                   <div className="w-full flex justify-center py-2">
                     <div
@@ -940,14 +1412,29 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                         width: (selectedTemplate.layoutType === 'STRIP_2x6' || (selectedTemplate.width && selectedTemplate.height && selectedTemplate.width / selectedTemplate.height < 0.5)) ? '150px' : '230px',
                         height: '345px',
                       }}
-                      className="bg-slate-950 rounded-xl border-2 border-white/20 shadow-2xl relative overflow-hidden flex items-center justify-center"
+                      className="bg-slate-950 rounded-xl border-2 border-white/20 shadow-2xl relative overflow-hidden flex items-center justify-center select-none"
                     >
-                      {/* Slots background with sample placeholder styling */}
+                      {/* Grid Lines Pembantu */}
+                      <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff05_1px,transparent_1px),linear-gradient(to_bottom,#ffffff05_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none" />
+
+                      {/* Frame PNG Background (jika mode 'slots', letakkan di BELAKANG z-10 agar garis slot foto di depan kelihatan jelas) */}
+                      {selectedTemplate.frameUrl && inspectorMode === 'slots' && (
+                        <img
+                          src={selectedTemplate.frameUrl}
+                          alt="Frame Background"
+                          style={{ opacity: inspectorFrameOpacity }}
+                          className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10 transition-opacity"
+                        />
+                      )}
+
+                      {/* Photo Canvas Slots */}
                       {selectedTemplate.slots.map((slot, index) => {
-                        const leftPct = (slot.x / (selectedTemplate.width || 1200)) * 100;
-                        const topPct = (slot.y / (selectedTemplate.height || 1800)) * 100;
-                        const widthPct = (slot.width / (selectedTemplate.width || 1200)) * 100;
-                        const heightPct = (slot.height / (selectedTemplate.height || 1800)) * 100;
+                        const canvasW = selectedTemplate.width || 1200;
+                        const canvasH = selectedTemplate.height || 1800;
+                        const leftPct = (slot.x / canvasW) * 100;
+                        const topPct = (slot.y / canvasH) * 100;
+                        const widthPct = (slot.width / canvasW) * 100;
+                        const heightPct = (slot.height / canvasH) * 100;
                         return (
                           <div
                             key={slot.id || index}
@@ -957,24 +1444,34 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                               width: `${widthPct}%`,
                               height: `${heightPct}%`,
                             }}
-                            className="absolute bg-gradient-to-tr from-sky-900 to-indigo-900 border border-sky-400/40 rounded flex flex-col items-center justify-center p-1 text-center"
+                            className={`absolute rounded transition-all flex flex-col items-center justify-between p-1 text-center pointer-events-none ${
+                              inspectorMode === 'slots'
+                                ? 'bg-sky-500/30 border-2 border-sky-400 shadow-[0_0_15px_rgba(56,189,248,0.5)] z-20'
+                                : 'bg-gradient-to-tr from-sky-900 to-indigo-900 border border-sky-400/40 z-10'
+                            }`}
                           >
-                            <div className="w-5 h-5 rounded-full bg-sky-500 text-slate-950 font-black text-[10px] flex items-center justify-center mb-0.5">
-                              #{index + 1}
+                            <div className="w-full flex items-center justify-between text-[8px] font-mono">
+                              <span className="px-1 rounded bg-sky-400 text-slate-950 font-black shadow-sm">
+                                #{index + 1}
+                              </span>
+                              <span className="text-white/80 bg-slate-950/80 px-0.5 rounded font-bold">
+                                {slot.width}×{slot.height}
+                              </span>
                             </div>
-                            <span className="text-[9px] text-sky-200 font-mono">
-                              {slot.width}×{slot.height}
-                            </span>
+
+                            <div className="text-[8px] text-sky-200 font-mono bg-slate-950/70 px-1 rounded mt-auto">
+                              X:{slot.x} Y:{slot.y}
+                            </div>
                           </div>
                         );
                       })}
 
-                      {/* Frame PNG Overlay on top */}
-                      {selectedTemplate.frameUrl && (
+                      {/* Frame PNG Foreground (jika mode 'preview', letakkan di DEPAN z-20) */}
+                      {selectedTemplate.frameUrl && inspectorMode === 'preview' && (
                         <img
                           src={selectedTemplate.frameUrl}
                           alt="Frame Overlay"
-                          className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10"
+                          className="absolute inset-0 w-full h-full object-contain pointer-events-none z-20"
                         />
                       )}
                     </div>
@@ -1168,15 +1665,15 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
       )}
 
       {/* ======================================================== */}
-      {/* MODAL: DESIGN & EDIT TEMPLATE FRAME STUDIO               */}
+      {/* MODAL: DESIGN & EDIT TEMPLATE FRAME STUDIO (SIMPLIFIED)  */}
       {/* ======================================================== */}
       <Modal
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         maxWidth="2xl"
-        title={editingTemplateId ? 'Edit & Kustomisasi Template Frame' : 'Import Frame PNG & Desain Tata Letak Slot Foto'}
+        title={editingTemplateId ? 'Edit Tata Letak Slot Template' : 'Buat Template Frame Foto Baru'}
       >
-        <form onSubmit={handleSaveImportedTemplate} className="space-y-5">
+        <form onSubmit={handleSaveImportedTemplate} className="space-y-4">
           {importError && (
             <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center gap-2 text-xs text-rose-300">
               <AlertCircle className="w-4 h-4 shrink-0" />
@@ -1184,28 +1681,302 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            {/* Left Column: Form & Slot Setup (7 cols) */}
-            <div className="lg:col-span-7 space-y-4">
-              {/* Template Name & Format */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Nama Template / Frame
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* ========================================================= */}
+            {/* KOLOM KIRI: VISUAL KANVAS BESAR DENGAN DRAG & RESIZE      */}
+            {/* ========================================================= */}
+            <div className="lg:col-span-6 flex flex-col items-center p-3 rounded-2xl bg-black/40 border border-white/10 space-y-3">
+              {/* Toolbar Kontrol Tampilan Kanvas */}
+              <div className="w-full flex items-center justify-between gap-2 pb-2 border-b border-white/10">
+                {/* Mode Switcher */}
+                <div className="flex items-center gap-1 p-0.5 rounded-xl bg-white/[0.05] border border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setFrameLayerMode('edit')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                      frameLayerMode === 'edit'
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <Move className="w-3.5 h-3.5" />
+                    <span>Mode Atur Slot</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFrameLayerMode('preview')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                      frameLayerMode === 'preview'
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Pratinjau Cetak</span>
+                  </button>
+                </div>
+
+                {/* Right controls: Snap Magnetik & Transparansi */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEnableMagneticSnap(!enableMagneticSnap)}
+                    className={`px-2 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                      enableMagneticSnap
+                        ? 'bg-sky-500/20 text-sky-300 border border-sky-400/50 shadow-sm'
+                        : 'bg-white/5 text-slate-400 border border-white/10 hover:text-white'
+                    }`}
+                    title="Nyalakan/matikan snap magnetik otomatis ke tengah kanvas dan slot lain"
+                  >
+                    <Magnet className={`w-3.5 h-3.5 ${enableMagneticSnap ? 'text-sky-400' : 'text-slate-400'}`} />
+                    <span>Snap {enableMagneticSnap ? 'ON' : 'OFF'}</span>
+                  </button>
+
+                  {/* Transparansi Frame Slider / Pill */}
+                  {importForm.frameUrl && (
+                    <div className="flex items-center gap-1 text-[11px] text-slate-300">
+                      <span className="text-slate-400">Transparansi:</span>
+                      {[0.5, 0.85, 1.0].map((val) => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setFrameOpacity(val)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all ${
+                            frameOpacity === val
+                              ? 'bg-sky-400 text-slate-950'
+                              : 'bg-white/5 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {Math.round(val * 100)}%
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Interactive Visual Canvas */}
+              <div className="relative flex items-center justify-center p-2 rounded-xl bg-slate-950/80 border border-white/5 shadow-inner">
+                <div
+                  ref={previewBoxRef}
+                  onPointerMove={handleCanvasPointerMove}
+                  onPointerUp={handleCanvasPointerUp}
+                  onPointerCancel={handleCanvasPointerUp}
+                  style={{
+                    width:
+                      importForm.layoutType === 'STRIP_2x6' || modalCanvasW / modalCanvasH < 0.5
+                        ? '160px'
+                        : importForm.layoutType === '4R_PORTRAIT' || modalCanvasW < modalCanvasH
+                        ? '285px'
+                        : '420px',
+                    height:
+                      importForm.layoutType === '4R_PORTRAIT' || importForm.layoutType === 'STRIP_2x6' || modalCanvasW <= modalCanvasH
+                        ? '428px'
+                        : '280px',
+                  }}
+                  className="bg-slate-950 rounded-xl border-2 border-white/20 shadow-2xl relative overflow-hidden select-none touch-none"
+                >
+                  {/* Grid Lines Pembantu */}
+                  <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff05_1px,transparent_1px),linear-gradient(to_bottom,#ffffff05_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none" />
+
+                  {/* Smart Magnetic Snapping Glowing Guidelines */}
+                  {activeGuides.x !== undefined && (
+                    <div
+                      style={{ left: `${(activeGuides.x / modalCanvasW) * 100}%` }}
+                      className="absolute top-0 bottom-0 w-0.5 bg-sky-400 shadow-[0_0_8px_#38bdf8] pointer-events-none z-40"
+                    >
+                      <span className="absolute top-1 -translate-x-1/2 bg-sky-500 text-slate-950 font-mono text-[8px] font-black px-1 rounded shadow whitespace-nowrap">
+                        X: {Math.round(activeGuides.x)}
+                      </span>
+                    </div>
+                  )}
+                  {activeGuides.y !== undefined && (
+                    <div
+                      style={{ top: `${(activeGuides.y / modalCanvasH) * 100}%` }}
+                      className="absolute left-0 right-0 h-0.5 bg-sky-400 shadow-[0_0_8px_#38bdf8] pointer-events-none z-40"
+                    >
+                      <span className="absolute left-1 -translate-y-1/2 bg-sky-500 text-slate-950 font-mono text-[8px] font-black px-1 rounded shadow whitespace-nowrap">
+                        Y: {Math.round(activeGuides.y)}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* FRAME LAYER: Jika mode 'edit', Frame berada di BELAKANG (z-10) sehingga TIDAK MENUTUPI SLOT */}
+                  {importForm.frameUrl && frameLayerMode === 'edit' && (
+                    <img
+                      src={importForm.frameUrl}
+                      alt="Frame Background"
+                      style={{ opacity: frameOpacity }}
+                      className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10 transition-opacity"
+                    />
+                  )}
+
+                  {/* Empty Frame Guide Prompt */}
+                  {!importForm.frameUrl && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4 text-slate-500 pointer-events-none z-0">
+                      <Upload className="w-8 h-8 mb-1.5 opacity-40 text-amber-400" />
+                      <span className="text-xs font-semibold text-slate-400">Belum Ada Frame PNG</span>
+                      <span className="text-[10px] text-slate-500">Pilih file PNG di panel samping</span>
+                    </div>
+                  )}
+
+                  {/* SLOT LAYER: Slot foto interaktif (z-20 saat inaktif, z-30 saat aktif) */}
+                  {importForm.slots.map((slot, index) => {
+                    const leftPct = (slot.x / modalCanvasW) * 100;
+                    const topPct = (slot.y / modalCanvasH) * 100;
+                    const widthPct = (slot.width / modalCanvasW) * 100;
+                    const heightPct = (slot.height / modalCanvasH) * 100;
+                    const isActive = activeSlotIdx === index;
+
+                    return (
+                      <div
+                        key={slot.id || index}
+                        style={{
+                          left: `${leftPct}%`,
+                          top: `${topPct}%`,
+                          width: `${widthPct}%`,
+                          height: `${heightPct}%`,
+                        }}
+                        onPointerDown={(e) => handleSlotPointerDown(e, index, 'move')}
+                        className={`absolute rounded-lg transition-all select-none touch-none flex flex-col items-center justify-between p-1.5 ${
+                          frameLayerMode === 'preview'
+                            ? 'bg-slate-700/80 border border-white/20 z-10'
+                            : isActive
+                            ? 'bg-sky-500/25 border-2 border-sky-400 shadow-[0_0_15px_rgba(56,189,248,0.4)] z-30 cursor-move'
+                            : 'bg-amber-400/15 border-2 border-dashed border-amber-400/70 hover:border-amber-300 z-20 cursor-move'
+                        }`}
+                      >
+                        {/* Header Slot (Tag Ukuran & Status) */}
+                        <div className="w-full flex items-center justify-between text-[9px] font-mono pointer-events-none">
+                          <span
+                            className={`px-1 rounded font-bold ${
+                              isActive ? 'bg-sky-400 text-slate-950' : 'bg-slate-900/80 text-amber-300'
+                            }`}
+                          >
+                            #{index + 1}
+                          </span>
+                          <span className="text-white/60 bg-slate-950/70 px-1 rounded">
+                            {slot.width}×{slot.height}
+                          </span>
+                        </div>
+
+                        {/* Center Icon Prompt */}
+                        <div className="flex flex-col items-center justify-center pointer-events-none">
+                          <div
+                            className={`w-7 h-7 rounded-full flex items-center justify-center font-black text-xs ${
+                              isActive ? 'bg-sky-400 text-slate-950 shadow-md' : 'bg-slate-900/80 text-amber-400'
+                            }`}
+                          >
+                            <Move className="w-3.5 h-3.5 stroke-[2.5]" />
+                          </div>
+                          <span className="text-[9px] font-semibold text-white/80 mt-0.5">
+                            {isActive ? 'Geser Bebas' : 'Pilih'}
+                          </span>
+                        </div>
+
+                        {/* Bottom Bar / Resizer Handle */}
+                        <div className="w-full flex items-center justify-end">
+                          {isActive && frameLayerMode === 'edit' && (
+                            <div
+                              onPointerDown={(e) => handleSlotPointerDown(e, index, 'resize')}
+                              className="w-5 h-5 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 flex items-center justify-center cursor-nwse-resize shadow-md active:scale-95 transition-transform pointer-events-auto"
+                              title="Tarik untuk perbesar / perkecil slot"
+                            >
+                              <Maximize2 className="w-3 h-3 stroke-[3]" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* FRAME LAYER: Jika mode 'preview', Frame diletakkan di DEPAN (z-20) untuk pratinjau hasil cetak asli */}
+                  {importForm.frameUrl && frameLayerMode === 'preview' && (
+                    <img
+                      src={importForm.frameUrl}
+                      alt="Frame Foreground Preview"
+                      className="absolute inset-0 w-full h-full object-contain pointer-events-none z-20"
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Panduan Cepat di Bawah Kanvas */}
+              <div className="text-center text-[11px] text-slate-400 leading-relaxed bg-white/[0.03] p-2 rounded-xl border border-white/5 w-full">
+                💡 <strong>Geser langsung:</strong> Sentuh & geser kotak slot di atas kanvas. <strong>Ubah ukuran:</strong> Tarik ikon panah di sudut kanan bawah slot aktif.
+              </div>
+            </div>
+
+            {/* ========================================================= */}
+            {/* KOLOM KANAN: PENGATURAN TEMPLATE & KONTROL CEPAT SLOT     */}
+            {/* ========================================================= */}
+            <div className="lg:col-span-6 space-y-4">
+              {/* BAGIAN 1: INFO UTAMA & UPLOAD FILE */}
+              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-200 mb-1">
+                    Nama Template Frame
                   </label>
                   <input
                     type="text"
                     value={importForm.name}
                     onChange={(e) => setImportForm({ ...importForm, name: e.target.value })}
                     placeholder="Contoh: Frame Ulang Tahun Pink Gold"
-                    className="w-full h-10 px-3 rounded-xl glass-input text-xs text-white"
+                    className="w-full h-9 px-3 rounded-xl glass-input text-xs text-white"
                     required
                   />
                 </div>
 
+                {/* File Upload Dropzone */}
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Format Kertas / Kanvas Cetak
+                  <label className="block text-xs font-bold text-slate-200 mb-1">
+                    File Frame PNG (Transparan)
+                  </label>
+
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/png,.png"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handlePngFileSelect(file);
+                    }}
+                    className="hidden"
+                  />
+
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-xl p-3 text-center cursor-pointer transition-all flex items-center justify-between gap-3 ${
+                      importForm.frameUrl
+                        ? 'border-emerald-500/50 bg-emerald-500/10 hover:bg-emerald-500/15'
+                        : 'border-white/20 hover:border-amber-500/50 hover:bg-white/[0.02]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 text-left truncate">
+                      <div className="w-8 h-8 rounded-lg bg-amber-400/20 text-amber-400 flex items-center justify-center shrink-0">
+                        {importForm.frameUrl ? <Check className="w-4 h-4 text-emerald-400 stroke-[3]" /> : <Upload className="w-4 h-4" />}
+                      </div>
+                      <div className="truncate">
+                        <span className="text-xs font-bold text-white block truncate">
+                          {importForm.fileName || 'Pilih File PNG Transparan'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block">
+                          {importForm.frameUrl ? 'Klik untuk mengganti gambar' : 'Pastikan lubang foto transparan (PNG)'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <span className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-bold text-white shrink-0">
+                      Browse
+                    </span>
+                  </div>
+                </div>
+
+                {/* Format Kertas Standar */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-200 mb-1">
+                    Format Ukuran Kertas
                   </label>
                   <select
                     value={importForm.layoutType}
@@ -1227,158 +1998,66 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                         height: newH,
                       });
                     }}
-                    className="w-full h-10 px-3 rounded-xl glass-input text-xs text-white bg-slate-900 border border-white/10"
+                    className="w-full h-9 px-3 rounded-xl glass-input text-xs text-white bg-slate-900 border border-white/10"
                   >
-                    <option value="4R_PORTRAIT">Standar Studio Portrait (1200 × 1800 px)</option>
-                    <option value="STRIP_2x6">Photo Strip 2×6 (600 × 1800 px)</option>
-                    <option value="CUSTOM">Ukuran Kustom (Bebas Atur Dimensi)</option>
+                    <option value="4R_PORTRAIT">Standar Studio Portrait 10 × 15 cm (1200 × 1800 px)</option>
+                    <option value="STRIP_2x6">Photo Strip 5 × 15 cm (600 × 1800 px)</option>
+                    <option value="CUSTOM">Ukuran Kustom (Atur Lebar & Tinggi Bebas)</option>
                   </select>
                 </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Status Kiosk
-                  </label>
-                  <div className="h-10 px-3 rounded-xl glass-input text-xs text-emerald-400 font-semibold flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4" />
-                    <span>Langsung Aktif di Editor</span>
-                  </div>
-                </div>
-
-                {importForm.layoutType === 'CUSTOM' && (
-                  <div className="col-span-2 grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-white/[0.03] border border-white/10">
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">Lebar Kanvas (px):</label>
-                      <input
-                        type="number"
-                        min={400}
-                        max={4800}
-                        value={importForm.width}
-                        onChange={(e) => setImportForm({ ...importForm, width: parseInt(e.target.value, 10) || 1200 })}
-                        className="w-full h-8 px-2 rounded-lg glass-input text-xs text-white font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">Tinggi Kanvas (px):</label>
-                      <input
-                        type="number"
-                        min={400}
-                        max={4800}
-                        value={importForm.height}
-                        onChange={(e) => setImportForm({ ...importForm, height: parseInt(e.target.value, 10) || 1800 })}
-                        className="w-full h-8 px-2 rounded-lg glass-input text-xs text-white font-mono"
-                      />
-                    </div>
-                  </div>
-                )}
               </div>
 
-              {/* PNG File Upload Dropzone */}
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5 flex items-center justify-between">
-                  <span>Upload File Frame PNG (Transparan)</span>
-                  <span className="text-[10px] text-amber-400">PNG Transparan disarankan</span>
-                </label>
-
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/png,.png"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handlePngFileSelect(file);
-                  }}
-                  className="hidden"
-                />
-
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${
-                    importForm.frameUrl
-                      ? 'border-emerald-500/50 bg-emerald-500/5 hover:bg-emerald-500/10'
-                      : 'border-white/20 hover:border-amber-500/50 hover:bg-white/[0.02]'
-                  }`}
-                >
-                  {importForm.frameUrl ? (
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center">
-                        <Check className="w-5 h-5 stroke-[3]" />
-                      </div>
-                      <div className="text-left">
-                        <span className="text-xs font-bold text-white block">
-                          {importForm.fileName || 'File Frame PNG Dipilih'}
-                        </span>
-                        <span className="text-[10px] text-emerald-400">
-                          Klik untuk mengganti gambar frame
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <Upload className="w-7 h-7 text-amber-400" />
-                      <span className="text-xs font-bold text-white">
-                        Pilih File PNG Transparan
-                      </span>
-                      <span className="text-[10px] text-slate-400">
-                        Pastikan area lubang foto transparan (alpha channel)
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Slot Presets Selector */}
-              <div className="space-y-2">
-                <span className="text-xs font-medium text-slate-300 block">
-                  Pilih Preset Cepat Susunan Slot:
-                </span>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {SLOT_PRESETS.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => handleApplyPreset(preset.id)}
-                      className={`py-2 px-2.5 rounded-xl border text-xs font-medium text-left transition-all ${
-                        selectedPresetId === preset.id
-                          ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-sm'
-                          : 'bg-white/[0.03] border-white/10 text-slate-300 hover:text-white'
-                      }`}
-                    >
-                      <span className="block font-bold truncate">{preset.name}</span>
-                      <span className="text-[10px] text-slate-400 font-mono">{preset.count} Foto</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Slots List Stepper / Badges */}
-              <div className="space-y-2 pt-2 border-t border-white/10">
+              {/* BAGIAN 2: PRESET CEPAT JUMLAH FOTO (1-KLIK) */}
+              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-sky-400" />
-                    <span>Slot Foto Terpasang ({importForm.slots.length} Slot):</span>
+                  <span className="text-xs font-bold text-slate-200">
+                    Pilihan Preset Susunan Cepat:
                   </span>
-
                   <button
                     type="button"
                     onClick={handleAddSlot}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/20 text-sky-300 hover:bg-sky-500/30 text-xs font-bold border border-sky-500/30 cursor-pointer"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/20 text-sky-300 hover:bg-sky-500/30 text-xs font-bold border border-sky-500/30 cursor-pointer transition-all"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>Tambah Slot Foto</span>
+                    <span>Tambah Slot</span>
                   </button>
                 </div>
 
-                <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'single-polaroid', label: '1 Foto', desc: 'Polaroid' },
+                    { id: 'duo-vertical', label: '2 Foto', desc: 'Duo Vertikal' },
+                    { id: 'trio-vertical', label: '3 Foto', desc: 'Trio Susun' },
+                    { id: 'quad-grid', label: '4 Foto', desc: 'Grid 2×2' },
+                  ].map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => handleApplyPreset(p.id)}
+                      className={`py-2 px-2 rounded-xl border text-center transition-all ${
+                        selectedPresetId === p.id
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300 font-bold shadow-sm ring-1 ring-amber-400/40'
+                          : 'bg-white/[0.03] border-white/10 text-slate-300 hover:text-white hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      <span className="text-xs block font-bold">{p.label}</span>
+                      <span className="text-[10px] text-slate-400 block">{p.desc}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Slot Selector Badges */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pt-1 pb-0.5 custom-scrollbar">
+                  <span className="text-[11px] text-slate-400 shrink-0 mr-1">Slot Aktif:</span>
                   {importForm.slots.map((s, idx) => (
                     <button
                       key={s.id || idx}
                       type="button"
                       onClick={() => setActiveSlotIdx(idx)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all ${
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 transition-all ${
                         activeSlotIdx === idx
                           ? 'bg-sky-400 text-slate-950 shadow-md ring-2 ring-white/50'
-                          : 'bg-white/[0.04] text-slate-300 hover:text-white border border-white/10'
+                          : 'bg-white/[0.05] text-slate-300 hover:text-white border border-white/10'
                       }`}
                     >
                       Slot #{idx + 1}
@@ -1387,29 +2066,233 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                 </div>
               </div>
 
-              {/* Active Slot Coordinate Tweaker */}
+              {/* BAGIAN 3: PENGATUR POSISI & UKURAN KANVAS FOTO (INTUITIF & RAPI) */}
               {currentActiveSlot && (
-                <div className="p-3 rounded-2xl bg-slate-900/60 border border-white/10 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-sky-400">
-                      Pengaturan Posisi Slot #{activeSlotIdx + 1}
-                    </span>
-
+                <div className="p-3.5 rounded-2xl bg-sky-950/30 border border-sky-400/30 space-y-3 shadow-md">
+                  {/* Header Slot Terpilih & Indikator */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-xs font-extrabold text-sky-300">
+                        Slot #{activeSlotIdx + 1}
+                      </span>
+                      <span className="text-[10px] text-sky-200/70 font-mono bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">
+                        {currentActiveSlot.width}×{currentActiveSlot.height}px
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        (X: {currentActiveSlot.x}, Y: {currentActiveSlot.y})
+                      </span>
+                    </div>
+
+                    {/* Pelurus & Perata Posisi Cepat (1-Klik) */}
+                    <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => handleCenterHorizontal(activeSlotIdx)}
-                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[10px] font-bold flex items-center gap-1"
-                        title="Tengahkan Horizontal"
+                        onClick={() => handleCenterBoth(activeSlotIdx)}
+                        className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 text-[10px] font-bold flex items-center gap-1 border border-sky-500/30 active:scale-95 transition-all"
+                        title="Taruh Slot Persis di Tengah-Tengah Kanvas (X & Y)"
                       >
-                        <AlignCenter className="w-3 h-3" />
-                        <span>Tengah</span>
+                        <Crosshair className="w-3 h-3 text-amber-400" />
+                        <span>Pusat Kanvas</span>
                       </button>
 
                       <button
                         type="button"
+                        onClick={() => handleCenterHorizontal(activeSlotIdx)}
+                        className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 text-[10px] font-bold flex items-center gap-1 border border-sky-500/30 active:scale-95 transition-all"
+                        title="Luruskan Rata Tengah Kiri-Kanan"
+                      >
+                        <AlignCenter className="w-3 h-3" />
+                        <span>Tengah Horizontal</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCenterVertical(activeSlotIdx)}
+                        className="px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 text-[10px] font-bold flex items-center gap-1 border border-sky-500/30 active:scale-95 transition-all"
+                        title="Luruskan Rata Tengah Atas-Bawah"
+                      >
+                        <Rows className="w-3 h-3" />
+                        <span>Tengah Vertikal</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRotateSlot(activeSlotIdx)}
+                        className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold flex items-center gap-1 border border-amber-500/30 active:scale-95 transition-all"
+                        title="Putar 90 Derajat (Tukar Orientasi Potret <-> Lanskap)"
+                      >
+                        <RotateCw className="w-3 h-3" />
+                        <span>Putar 90°</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Kontrol Skala & Dimensi Custom */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-300">
+                        Ubah Ukuran:
+                      </span>
+                      {importForm.slots.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleMatchAllToActive('both')}
+                          className="px-2 py-0.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 border border-sky-400/30 text-[10px] font-bold flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                          title="Samakan Lebar & Tinggi semua slot foto persis dengan Slot ini"
+                        >
+                          <Maximize2 className="w-3 h-3 text-sky-300" />
+                          <span>Samakan Ukuran Semua Slot</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleScaleSlot(activeSlotIdx, 1.1)}
+                        className="py-1.5 px-2 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 border border-sky-500/30 text-xs font-bold flex items-center justify-center gap-1 active:scale-95 transition-all"
+                      >
+                        <ZoomIn className="w-3.5 h-3.5" />
+                        <span>Perbesar +10%</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleScaleSlot(activeSlotIdx, 0.9)}
+                        className="py-1.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-bold flex items-center justify-center gap-1 active:scale-95 transition-all"
+                      >
+                        <ZoomOut className="w-3.5 h-3.5" />
+                        <span>Perkecil -10%</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleAdjustDimension(activeSlotIdx, 40, 0)}
+                        className="py-1.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[11px] font-semibold flex items-center justify-center gap-1 active:scale-95 transition-all"
+                      >
+                        <span>Lebar +</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleAdjustDimension(activeSlotIdx, 0, 40)}
+                        className="py-1.5 px-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-[11px] font-semibold flex items-center justify-center gap-1 active:scale-95 transition-all"
+                      >
+                        <span>Tinggi +</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Kunci Rasio Aspek Foto Standar */}
+                  <div className="space-y-1.5 pt-1 border-t border-white/10">
+                    <span className="text-[11px] font-semibold text-slate-300 block">
+                      Rasio Foto Kamera:
+                    </span>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleSetAspectRatio(activeSlotIdx, 3, 2)}
+                        className="py-1 px-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-[10px] font-bold text-center active:scale-95 transition-all"
+                        title="Rasio Standar Kamera DSLR / Studio (3:2)"
+                      >
+                        3:2 Studio
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetAspectRatio(activeSlotIdx, 4, 3)}
+                        className="py-1 px-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-[10px] font-bold text-center active:scale-95 transition-all"
+                        title="Rasio Kamera Kompak / Webcam (4:3)"
+                      >
+                        4:3 Kompak
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetAspectRatio(activeSlotIdx, 1, 1)}
+                        className="py-1 px-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-[10px] font-bold text-center active:scale-95 transition-all"
+                        title="Rasio Persegi / Square (1:1)"
+                      >
+                        1:1 Persegi
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSetAspectRatio(activeSlotIdx, 16, 9)}
+                        className="py-1 px-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white border border-white/10 text-[10px] font-bold text-center active:scale-95 transition-all"
+                        title="Rasio Lebar Cinematic (16:9)"
+                      >
+                        16:9 Lebar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tombol Geser Posisi Halus (Nudge D-Pad) & Tindakan Slot */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] font-semibold text-slate-300 mr-1">
+                        Geser Halus:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleNudgeSlot(activeSlotIdx, 0, -25)}
+                        className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/15 text-slate-200 flex items-center justify-center text-xs font-bold active:scale-95"
+                        title="Geser ke Atas (25px)"
+                      >
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleNudgeSlot(activeSlotIdx, 0, 25)}
+                        className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/15 text-slate-200 flex items-center justify-center text-xs font-bold active:scale-95"
+                        title="Geser ke Bawah (25px)"
+                      >
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleNudgeSlot(activeSlotIdx, -25, 0)}
+                        className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/15 text-slate-200 flex items-center justify-center text-xs font-bold active:scale-95"
+                        title="Geser ke Kiri (25px)"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleNudgeSlot(activeSlotIdx, 25, 0)}
+                        className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/15 text-slate-200 flex items-center justify-center text-xs font-bold active:scale-95"
+                        title="Geser ke Kanan (25px)"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      {importForm.slots.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleReorderSlot(activeSlotIdx, 'up')}
+                            disabled={activeSlotIdx === 0}
+                            className="px-1.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 disabled:opacity-30 text-[10px] font-bold"
+                            title="Tukar urutan ke atas"
+                          >
+                            ▲ Urutan
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleReorderSlot(activeSlotIdx, 'down')}
+                            disabled={activeSlotIdx === importForm.slots.length - 1}
+                            className="px-1.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 disabled:opacity-30 text-[10px] font-bold"
+                            title="Tukar urutan ke bawah"
+                          >
+                            ▼ Urutan
+                          </button>
+                        </>
+                      )}
+
+                      <button
+                        type="button"
                         onClick={() => handleDuplicateSlot(activeSlotIdx)}
-                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[10px] font-bold flex items-center gap-1"
+                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[10px] font-bold flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
                         title="Duplikasi Slot Ini"
                       >
                         <Copy className="w-3 h-3" />
@@ -1419,7 +2302,7 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                       <button
                         type="button"
                         onClick={() => handleDeleteSlot(activeSlotIdx)}
-                        className="px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-[10px] font-bold flex items-center gap-1"
+                        className="px-2 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[10px] font-bold flex items-center gap-1 border border-rose-500/30 active:scale-95 transition-all cursor-pointer"
                         title="Hapus Slot Ini"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -1428,147 +2311,97 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-4 gap-2 font-mono text-xs">
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-0.5">X (px):</label>
-                      <input
-                        type="number"
-                        value={currentActiveSlot.x}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value, 10) || 0;
-                          setImportForm((prev) => ({
-                            ...prev,
-                            slots: prev.slots.map((s, i) => (i === activeSlotIdx ? { ...s, x: val } : s)),
-                          }));
-                        }}
-                        className="w-full h-8 px-2 rounded-lg glass-input text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-0.5">Y (px):</label>
-                      <input
-                        type="number"
-                        value={currentActiveSlot.y}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value, 10) || 0;
-                          setImportForm((prev) => ({
-                            ...prev,
-                            slots: prev.slots.map((s, i) => (i === activeSlotIdx ? { ...s, y: val } : s)),
-                          }));
-                        }}
-                        className="w-full h-8 px-2 rounded-lg glass-input text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-0.5">Lebar (W):</label>
-                      <input
-                        type="number"
-                        value={currentActiveSlot.width}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value, 10) || 100;
-                          setImportForm((prev) => ({
-                            ...prev,
-                            slots: prev.slots.map((s, i) => (i === activeSlotIdx ? { ...s, width: val } : s)),
-                          }));
-                        }}
-                        className="w-full h-8 px-2 rounded-lg glass-input text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-400 block mb-0.5">Tinggi (H):</label>
-                      <input
-                        type="number"
-                        value={currentActiveSlot.height}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value, 10) || 100;
-                          setImportForm((prev) => ({
-                            ...prev,
-                            slots: prev.slots.map((s, i) => (i === activeSlotIdx ? { ...s, height: val } : s)),
-                          }));
-                        }}
-                        className="w-full h-8 px-2 rounded-lg glass-input text-xs text-white"
-                      />
-                    </div>
+                  {/* Accordion Angka Presisi Manual (Opsional) */}
+                  <div className="pt-1 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setShowCoordinatesManual(!showCoordinatesManual)}
+                      className="text-[10px] font-bold text-slate-400 hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Sliders className="w-3 h-3" />
+                      <span>{showCoordinatesManual ? 'Sembunyikan Koordinat Manual' : 'Buka Koordinat Angka Presisi (X, Y, W, H)'}</span>
+                    </button>
+
+                    {showCoordinatesManual && (
+                      <div className="grid grid-cols-4 gap-2 font-mono text-xs mt-2 p-2 rounded-xl bg-black/40 border border-white/10">
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-0.5">X (px):</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={currentActiveSlot.x}
+                            onChange={(e) => {
+                              const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                              setImportForm((prev) => ({
+                                ...prev,
+                                slots: prev.slots.map((s, i) => (i === activeSlotIdx ? { ...s, x: val } : s)),
+                              }));
+                            }}
+                            className="w-full h-7 px-2 rounded-lg glass-input text-xs text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-0.5">Y (px):</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={currentActiveSlot.y}
+                            onChange={(e) => {
+                              const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                              setImportForm((prev) => ({
+                                ...prev,
+                                slots: prev.slots.map((s, i) => (i === activeSlotIdx ? { ...s, y: val } : s)),
+                              }));
+                            }}
+                            className="w-full h-7 px-2 rounded-lg glass-input text-xs text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-0.5">Lebar (W):</label>
+                          <input
+                            type="number"
+                            min="50"
+                            value={currentActiveSlot.width}
+                            onChange={(e) => {
+                              const val = Math.max(50, parseInt(e.target.value, 10) || 50);
+                              setImportForm((prev) => ({
+                                ...prev,
+                                slots: prev.slots.map((s, i) => (i === activeSlotIdx ? { ...s, width: val } : s)),
+                              }));
+                            }}
+                            className="w-full h-7 px-2 rounded-lg glass-input text-xs text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-slate-400 block mb-0.5">Tinggi (H):</label>
+                          <input
+                            type="number"
+                            min="50"
+                            value={currentActiveSlot.height}
+                            onChange={(e) => {
+                              const val = Math.max(50, parseInt(e.target.value, 10) || 50);
+                              setImportForm((prev) => ({
+                                ...prev,
+                                slots: prev.slots.map((s, i) => (i === activeSlotIdx ? { ...s, height: val } : s)),
+                              }));
+                            }}
+                            className="w-full h-7 px-2 rounded-lg glass-input text-xs text-white"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
             </div>
-
-            {/* Right Column: Visual Interactive Canvas Preview (5 cols) */}
-            <div className="lg:col-span-5 flex flex-col items-center justify-center p-4 rounded-2xl bg-black/40 border border-white/10 space-y-3">
-              <span className="text-[11px] font-bold text-slate-300 block text-center">
-                Visual Editor: Sentuh & Geser Kotak Slot
-              </span>
-
-              {/* Interactive Canvas Drag Box */}
-              <div
-                ref={previewBoxRef}
-                style={{
-                  width: importForm.layoutType === 'STRIP_2x6' || (modalCanvasW / modalCanvasH < 0.5) ? '135px' : '230px',
-                  height: '345px',
-                }}
-                className="bg-slate-950 rounded-xl border-2 border-white/20 shadow-2xl relative overflow-hidden select-none touch-none flex items-center justify-center"
-              >
-                {/* Visual Slots inside modal */}
-                {importForm.slots.map((slot, index) => {
-                  const leftPct = (slot.x / modalCanvasW) * 100;
-                  const topPct = (slot.y / modalCanvasH) * 100;
-                  const widthPct = (slot.width / modalCanvasW) * 100;
-                  const heightPct = (slot.height / modalCanvasH) * 100;
-                  const isActive = activeSlotIdx === index;
-
-                  return (
-                    <div
-                      key={slot.id || index}
-                      style={{
-                        left: `${leftPct}%`,
-                        top: `${topPct}%`,
-                        width: `${widthPct}%`,
-                        height: `${heightPct}%`,
-                      }}
-                      onClick={() => setActiveSlotIdx(index)}
-                      className={`absolute rounded transition-shadow flex items-center justify-center cursor-move ${
-                        isActive
-                          ? 'bg-sky-500/50 border-2 border-sky-400 ring-2 ring-white/50 z-20 shadow-lg'
-                          : 'bg-indigo-900/40 border border-indigo-400/50 z-10'
-                      }`}
-                    >
-                      <div className="w-5 h-5 rounded-full bg-sky-500 text-slate-950 font-black text-[10px] flex items-center justify-center pointer-events-none">
-                        #{index + 1}
-                      </div>
-
-                      {/* Resize handle icon in bottom right */}
-                      {isActive && (
-                        <div className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center pointer-events-none shadow">
-                          <Maximize2 className="w-2.5 h-2.5 stroke-[3]" />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {/* Frame PNG Overlay (Semi-transparent preview) */}
-                {importForm.frameUrl && (
-                  <img
-                    src={importForm.frameUrl}
-                    alt="Frame Overlay Preview"
-                    className="absolute inset-0 w-full h-full object-contain pointer-events-none z-30 opacity-90"
-                  />
-                )}
-              </div>
-
-              <p className="text-[10px] text-slate-400 text-center leading-relaxed">
-                💡 Sentuh nomor slot untuk mengaktifkan, lalu atur angka koordinat X, Y, W, H di samping.
-              </p>
-            </div>
           </div>
 
           {/* Modal Footer Buttons */}
-          <div className="pt-4 border-t border-white/10 flex items-center justify-end gap-3">
+          <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-3">
             <button
               type="button"
               onClick={() => setIsImportModalOpen(false)}
-              className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold"
+              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold"
             >
               Batal
             </button>
@@ -1579,7 +2412,7 @@ export const TemplateManagementPage: React.FC<TemplateManagementPageProps> = ({ 
               className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 text-xs font-black shadow-glow-primary active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
             >
               {isSavingTemplate && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-              <span>{editingTemplateId ? 'Simpan Perubahan Template' : 'Simpan & Aktifkan Template Baru'}</span>
+              <span>{editingTemplateId ? 'Simpan Perubahan Template' : 'Simpan & Aktifkan Template'}</span>
             </button>
           </div>
         </form>

@@ -1,3 +1,6 @@
+// frontend/src/types/hardware.ts
+// Tipe Perangkat Keras Kamera & Dedicated Windows Print Engine
+
 export type DeviceConnectionStatus = 'connected' | 'demo' | 'disconnected' | 'busy' | 'error';
 
 export interface CameraDeviceInfo {
@@ -38,15 +41,50 @@ export interface PrinterCustomConfig {
   settings: PrinterSettingsConfig;
 }
 
+export type PrinterCategory = 'inkjet' | 'dyesub' | 'selphy' | 'surelab' | 'standard';
+
+export type DetectedHardwareIssue =
+  | 'none'
+  | 'paper_out'
+  | 'paper_jam'
+  | 'door_open'
+  | 'toner_or_ribbon_out'
+  | 'paper_problem'
+  | 'user_intervention'
+  | 'offline'
+  | 'busy'
+  | 'unknown';
+
+export interface DetailedHardwareStatus {
+  isOnline: boolean;
+  statusText: string;
+  hardwareIssue: string;
+  issueDescription: string | null;
+  spoolerQueueCount: number;
+  isReadyToPrint: boolean;
+  hasExtendedSensors: boolean;
+  rawPrinterStatus?: number;
+  rawExtendedStatus?: number;
+  rawDetectedErrorState?: number;
+  category?: PrinterCategory;
+  portName?: string;
+  connectionState?: string;
+  detectedIssues?: string[];
+}
+
 export interface PrinterInfo {
   id: string;
   name: string;
   displayName?: string;
+  driverName?: string;
+  portName?: string;
+  category?: PrinterCategory;
   isDefault: boolean;
   status: DeviceConnectionStatus;
+  hardwareStatus?: DetailedHardwareStatus;
   paperStatus?: 'ready' | 'low' | 'empty';
   ribbonStatus?: 'ready' | 'low' | 'empty';
-  supportedSizes?: string[]; // e.g. ["4R", "2x6"]
+  supportedSizes?: string[];
   paperSize?: string;
   settings?: PrinterSettingsConfig;
 }
@@ -55,10 +93,67 @@ export interface PrintJobParams {
   sessionId: string;
   copies: number;
   layoutImageUrl: string;
+  printerName?: string;
+  customPaperWidthCm?: number;
+  customPaperHeightCm?: number;
+  marginTopCm?: number;
+  marginLeftCm?: number;
+  orientation?: 'portrait' | 'landscape' | 'auto';
 }
 
 export interface PrintJobResult {
   jobId: string;
-  status: 'queued' | 'printing' | 'completed' | 'failed';
+  status: 'queued' | 'preparing' | 'printing' | 'paused_error' | 'completed' | 'failed' | 'cancelled';
   message?: string;
+}
+
+export interface PrintEngineDailyAudit {
+  date: string;
+  totalPrints: number;
+  successfulPrints: number;
+  failedPrints: number;
+  reprintCount: number;
+  printerBreakdown: Record<string, number>;
+}
+
+export interface PrintAuditRecord {
+  id: string;
+  sessionId: string;
+  printerName: string;
+  copies: number;
+  completedCopies?: number;
+  isReprint: boolean;
+  reprintReason?: string;
+  status: 'completed' | 'failed';
+  timestamp: string;
+  errorMessage?: string;
+  errorReason?: string;
+}
+
+export interface PrintEngineAuditData {
+  daily: PrintEngineDailyAudit;
+  recent: PrintAuditRecord[];
+}
+
+export interface PrintQueueItem {
+  id: string;
+  sessionId: string;
+  printerName: string;
+  filePath: string;
+  totalCopies: number;
+  completedCopies: number;
+  currentCopyIndex: number;
+  state: 'queued' | 'preparing' | 'printing' | 'paused_error' | 'completed' | 'failed' | 'cancelled';
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  hardwareIssue?: string;
+  errorMessage?: string;
+}
+
+export interface PrintQueueStatusData {
+  queue: PrintQueueItem[];
+  currentJob: PrintQueueItem | null;
+  isPaused: boolean;
+  pendingCount: number;
 }

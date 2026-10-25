@@ -41,7 +41,7 @@ export const updateSettingsSchema = z.object({
   paymentTimeoutSeconds: z.number().int().min(60).max(1800).optional(),
   autoResetSeconds: z.number().int().min(5).max(300).optional(),
   maintenanceMode: z.boolean().optional(),
-  whatsappEnabled: z.boolean().optional(),
+  emailDeliveryEnabled: z.boolean().optional(),
   galleryEnabled: z.boolean().optional(),
   selectedCameraId: z.string().nullable().optional(),
   selectedPrinterName: z.string().nullable().optional(),

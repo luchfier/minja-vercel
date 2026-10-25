@@ -9,10 +9,16 @@ import {
   globalShortcut,
   Menu,
   shell,
+  session,
 } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { PrintEngine } from './print-engine';
+
+// Auto-grant media stream access (camera/mic) and bypass interactive permission bubble in kiosk
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 const isKioskMode = process.env.KIOSK_MODE === 'true' || (!isDev && process.env.WINDOWED !== 'true');
@@ -174,13 +180,55 @@ function registerAdminShortcuts(): void {
  * Registrasi IPC Handlers
  */
 function registerIpcHandlers(): void {
-  // IPC: Keluar dari aplikasi (Membutuhkan verifikasi PIN admin)
+  // IPC: Keluar dari aplikasi (Membutuhkan verifikasi PIN admin aktif)
   ipcMain.handle('kiosk:exit', async (_event, pin?: string) => {
-    // PIN darurat default '123456'
-    if (pin && pin === '123456') {
-      setTimeout(() => app.quit(), 300);
-      return { success: true, message: 'Kiosk ditutup oleh admin.' };
+    if (!pin || pin.trim().length === 0) {
+      return { success: false, message: 'PIN admin wajib dimasukkan.' };
     }
+
+    // 1. Coba verifikasi ke backend Fastify via HTTP POST /api/admin/login
+    try {
+      const authRes = await new Promise<{ ok: boolean; status: number }>((resolve) => {
+        const req = http.request(
+          'http://localhost:3000/api/admin/login',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 2500,
+          },
+          (res) => {
+            resolve({ ok: res.statusCode === 200, status: res.statusCode || 500 });
+          }
+        );
+        req.on('error', () => resolve({ ok: false, status: 0 }));
+        req.on('timeout', () => {
+          req.destroy();
+          resolve({ ok: false, status: 0 });
+        });
+        req.write(JSON.stringify({ pin }));
+        req.end();
+      });
+
+      if (authRes.ok) {
+        setTimeout(() => app.quit(), 300);
+        return { success: true, message: 'PIN admin terverifikasi. Kiosk ditutup.' };
+      }
+
+      if (authRes.status > 0) {
+        return { success: false, message: 'PIN admin tidak valid atau akses sedang terkunci.' };
+      }
+    } catch {
+      // Backend Fastify offline
+    }
+
+    // 2. Fallback offline darurat jika backend tidak dapat dihubungi
+    if (pin === '123456') {
+      setTimeout(() => app.quit(), 300);
+      return { success: true, message: 'Kiosk ditutup via PIN darurat offline.' };
+    }
+
     return { success: false, message: 'PIN admin tidak valid.' };
   });
 
@@ -210,15 +258,65 @@ function registerIpcHandlers(): void {
   });
 }
 
+/**
+ * Watchdog pemantau kesehatan memori Kiosk
+ * Mencegah Chromium Renderer out-of-memory pada operasional 24/7
+ */
+function startMemoryWatchdog(): void {
+  setInterval(async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      const memoryInfo = await process.getProcessMemoryInfo();
+      const rssMB = Math.round(memoryInfo.residentSet / 1024);
+      if (rssMB > 1200) {
+        console.warn(`[Watchdog] Pemakaian RAM tinggi (${rssMB} MB). Memeriksa status idle untuk reload aman.`);
+        mainWindow.webContents.executeJavaScript('window.location.hash || window.location.pathname').then((path) => {
+          if (!path || path === '/' || path.includes('welcome')) {
+            console.log('[Watchdog] Melakukan auto-refresh di attract screen untuk membebaskan memori.');
+            mainWindow?.reload();
+          }
+        }).catch(() => {});
+      }
+    } catch {
+      // Abaikan error watchdog
+    }
+  }, 5 * 60 * 1000);
+}
+
 // App Lifecycle
 app.whenReady().then(async () => {
+  // Otomatis izinkan seluruh akses hardware (kamera, mikrofon, media) untuk antarmuka Kiosk mandiri
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details: any) => {
+    const allowed = ['media', 'camera', 'microphone', 'fullscreen', 'pointerLock', 'notifications'];
+    if (
+      allowed.includes(permission) ||
+      (details && details.mediaTypes && (details.mediaTypes.includes('video') || details.mediaTypes.includes('audio')))
+    ) {
+      return callback(true);
+    }
+    return callback(true); // Standalone kiosk selalu izinkan akses
+  });
+
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    return true; // Standalone kiosk selalu izinkan akses camera/media
+  });
+
   registerIpcHandlers();
   registerAdminShortcuts();
+  startMemoryWatchdog();
+
+  // Inisialisasi Dedicated Windows Print Engine
+  const printEngine = PrintEngine.getInstance();
+  printEngine.registerIpcHandlers();
 
   // Tunggu Fastify backend siap sebentar (tidak blocking jika offline)
   checkBackendHealth(5, 1000).catch(() => {});
 
   await createMainWindow();
+
+  if (mainWindow) {
+    printEngine.attachWindow(mainWindow);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

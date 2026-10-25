@@ -1,5 +1,5 @@
 // tests/delivery.test.ts
-// Test suite untuk Distribusi Digital (Galeri S3/R2 & Pengiriman WhatsApp)
+// Test suite untuk Distribusi Digital (Galeri S3/R2 & Pengiriman Soft File Email)
 // Sesuai ARCHITECTURE.md §4.2, §5.1 & THE_NEXT_STEP.md §6
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -7,7 +7,7 @@ import { buildApp } from '../src/app.js';
 import type { FastifyInstance } from 'fastify';
 
 process.env['DATABASE_URL'] =
-  process.env['DATABASE_URL'] || 'postgresql://postgres:MINJA@localhost:5432/minjaphotobooth';
+  process.env['DATABASE_URL'] || 'postgresql://postgres:postgres@localhost:5432/minjaphotobooth';
 process.env['JWT_SECRET'] = 'test-secret-key-that-is-at-least-32-chars-long';
 process.env['BOOTH_API_KEY'] = 'test-booth-key';
 process.env['NODE_ENV'] = 'test';
@@ -15,7 +15,7 @@ process.env['LOG_LEVEL'] = 'silent';
 
 let app: FastifyInstance;
 
-describe('Digital Delivery & WhatsApp Distribution Endpoints', () => {
+describe('Digital Delivery & Email Distribution Endpoints', () => {
   beforeAll(async () => {
     app = await buildApp();
     await app.ready();
@@ -99,15 +99,15 @@ describe('Digital Delivery & WhatsApp Distribution Endpoints', () => {
     expect(body.data.sizeBytes).toBeGreaterThan(0);
   });
 
-  it('POST /api/sessions/:sessionId/whatsapp sends soft-file link to valid phone', async () => {
+  it('POST /api/sessions/:sessionId/email sends soft-file link to valid email', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: `/api/sessions/${testSessionId}/whatsapp`,
+      url: `/api/sessions/${testSessionId}/email`,
       headers: {
         'x-booth-key': 'test-booth-key',
       },
       payload: {
-        phoneNumber: '081298765432',
+        email: 'pelanggan@gmail.com',
       },
     });
 
@@ -118,15 +118,15 @@ describe('Digital Delivery & WhatsApp Distribution Endpoints', () => {
     expect(body.data).toHaveProperty('messageId');
   });
 
-  it('POST /api/sessions/:sessionId/whatsapp rejects invalid short phone number', async () => {
+  it('POST /api/sessions/:sessionId/email rejects invalid email address', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: `/api/sessions/${testSessionId}/whatsapp`,
+      url: `/api/sessions/${testSessionId}/email`,
       headers: {
         'x-booth-key': 'test-booth-key',
       },
       payload: {
-        phoneNumber: '081',
+        email: 'not-an-email',
       },
     });
 
@@ -170,5 +170,41 @@ describe('Digital Delivery & WhatsApp Distribution Endpoints', () => {
     expect(Array.isArray(body.data.files)).toBe(true);
     expect(body.data.files.length).toBeGreaterThan(0);
     expect(body.data.accessCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('GET /s/:sessionId renders mobile HTML gallery page successfully', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/s/${testSessionId}?token=${generatedToken}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('Cetak 4R');
+    expect(res.body).toContain('Unduh Foto');
+  });
+
+  it('GET /storage/galleries/:sessionId/:fileName serves file directly from local storage with 200 OK', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/storage/galleries/${testSessionId}/strip_final.jpg`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('image/jpeg');
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+    expect(res.rawPayload.length).toBeGreaterThan(0);
+  });
+
+  it('GET /api/public/gallery/:sessionId/download/:fileName downloads file with attachment Content-Disposition', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/public/gallery/${testSessionId}/download/strip_final.jpg`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-disposition']).toContain('attachment');
+    expect(res.headers['content-disposition']).toContain('strip_final.jpg');
+    expect(res.rawPayload.length).toBeGreaterThan(0);
   });
 });

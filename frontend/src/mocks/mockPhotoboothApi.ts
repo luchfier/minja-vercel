@@ -821,12 +821,12 @@ export class MockPhotoboothApi implements IPhotoboothApi {
     };
   }
 
-  async sendWhatsApp(_sessionId: string, _phoneNumber: string): Promise<ApiResponse<{ sent: boolean; messageId: string }>> {
+  async sendEmail(_sessionId: string, _email: string): Promise<ApiResponse<{ sent: boolean; messageId: string }>> {
     return {
       success: true,
       data: {
         sent: true,
-        messageId: 'wa_' + Math.random().toString(36).substring(2, 9),
+        messageId: 'email_' + Math.random().toString(36).substring(2, 9),
       },
       timestamp: new Date().toISOString(),
     };
@@ -834,7 +834,8 @@ export class MockPhotoboothApi implements IPhotoboothApi {
 
   async getGalleryUrl(sessionId: string): Promise<ApiResponse<{ qrString: string; galleryUrl: string; expiresAt: string }>> {
     const token = 'tok_' + Math.random().toString(36).substring(2, 10);
-    const galleryUrl = `https://gallery.minjaphotobooth.com/s/${sessionId}?token=${token}`;
+    const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+    const galleryUrl = `http://${host}:3000/s/${sessionId}?token=${token}`;
     return {
       success: true,
       data: {
@@ -977,9 +978,23 @@ export class MockPhotoboothApi implements IPhotoboothApi {
   async updateTemplate(_token: string, id: string, tpl: Partial<TemplateItem>): Promise<ApiResponse<TemplateItem>> {
     const index = this.adminTemplates.findIndex((t) => t.id === id);
     if (index === -1) {
+      const newTpl: TemplateItem = {
+        id,
+        name: tpl.name || 'Template Frame',
+        thumbnailUrl: tpl.thumbnailUrl || '',
+        frameUrl: tpl.frameUrl || '',
+        layoutType: tpl.layoutType || '4R_PORTRAIT',
+        width: tpl.width || 1200,
+        height: tpl.height || 1800,
+        isActive: tpl.isActive ?? true,
+        isDefault: tpl.isDefault ?? false,
+        slots: tpl.slots || [],
+      };
+      this.adminTemplates.unshift(newTpl);
+      saveToStorage(STORAGE_KEYS.TEMPLATES, this.adminTemplates);
       return {
-        success: false,
-        error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template tidak ditemukan' },
+        success: true,
+        data: newTpl,
         timestamp: new Date().toISOString(),
       };
     }

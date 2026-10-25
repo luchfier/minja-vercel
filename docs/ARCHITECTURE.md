@@ -27,10 +27,10 @@ Pemisahan ini menjamin bahwa:
 | # | Prinsip | Penjelasan |
 |---|---------|------------|
 | 1 | **Separation of Concerns** | Frontend menampilkan UI. Backend menghitung harga dan memvalidasi status. Desktop service mengelola hardware. |
-| 2 | **Zero Secrets in Frontend** | Midtrans Server Key, WhatsApp Token, database password tidak pernah ada di Electron renderer atau preload. |
+| 2 | **Zero Secrets in Frontend** | Midtrans Server Key, kredensial SMTP Email, database password tidak pernah ada di Electron renderer atau preload. |
 | 3 | **Server-Side Price Authority** | Client mengirim `packageId` dan `additionalPrints`. Backend mengambil harga dari database dan menghitung total. Client tidak mengirim harga. |
 | 4 | **Payment Verification by Backend** | Sesi kamera hanya aktif setelah backend memvalidasi status `settlement` dari Midtrans. Redirect atau tampilan QRIS di frontend bukan bukti pembayaran. |
-| 5 | **Adapter Pattern** | Setiap integrasi eksternal (Midtrans, WhatsApp, Object Storage, DSLR, Printer) dienkapsulasi dalam adapter dengan interface TypeScript. |
+| 5 | **Adapter Pattern** | Setiap integrasi eksternal (Midtrans, Layanan Email SMTP, Object Storage, DSLR, Printer) dienkapsulasi dalam adapter dengan interface TypeScript. |
 | 6 | **Offline-First Data** | SQLite lokal menyimpan salinan operasional. Sync worker mendorong data ke PostgreSQL saat online. Booth tetap berfungsi tanpa internet. |
 | 7 | **Idempotent Operations** | Webhook Midtrans dan perintah cetak menggunakan kunci idempoten. Notifikasi ganda tidak menyebabkan sesi ganda atau cetak berulang. |
 
@@ -67,7 +67,7 @@ graph TB
         
         subgraph Adapters ["External Adapters"]
             MidtransAdapter["Midtrans QRIS Adapter"]
-            WhatsAppAdapter["WhatsApp Cloud API Adapter"]
+            EmailAdapter["Email Service Adapter (SMTP)"]
             StorageAdapter["Object Storage Adapter<br/>(S3 / R2)"]
         end
         
@@ -79,7 +79,7 @@ graph TB
 
     subgraph ExternalServices ["External Services"]
         MidtransAPI["Midtrans API"]
-        MetaAPI["Meta WhatsApp API"]
+        SMTPServer["SMTP Mail Server"]
         ObjStore["Cloudflare R2 / AWS S3"]
     end
 
@@ -96,7 +96,7 @@ graph TB
     Prisma --> PG
 
     MidtransAdapter --> MidtransAPI
-    WhatsAppAdapter --> MetaAPI
+    EmailAdapter --> SMTPServer
     StorageAdapter --> ObjStore
 
     MidtransAPI -->|"Webhook POST"| Router
@@ -123,7 +123,7 @@ Bertanggung jawab atas:
 | **Payments** | Membuat transaksi Midtrans QRIS, menerima webhook, polling status, verifikasi signature |
 | **Photos** | Menyimpan metadata foto per sesi |
 | **Gallery** | Membuat tautan galeri privat, mengelola token dan retensi |
-| **WhatsApp** | Mengirim pesan melalui WhatsApp Cloud API |
+| **Email** | Mengirim pesan soft file melalui Layanan Email (SMTP / Nodemailer) |
 | **Object Storage** | Upload/download foto ke S3/R2 |
 | **Reports** | Query laporan transaksi, ekspor CSV |
 | **Audit Log** | Mencatat setiap tindakan admin |
@@ -156,14 +156,14 @@ Bertanggung jawab atas:
        ▼                                                          ▼
 ┌───────────────────────┐                                  ┌──────────────────────┐
 │ Camera / Printer /    │                                  │ PostgreSQL           │
-│ SQLite / Sharp        │                                  │ Midtrans / WA / S3   │
+│ SQLite / Sharp        │                                  │ Midtrans / Email / S3│
 └───────────────────────┘                                  └──────────────────────┘
 ```
 
 - Desktop client berkomunikasi ke backend **hanya melalui HTTP REST**.
 - Renderer berkomunikasi ke Electron Main **hanya melalui typed IPC** (contextBridge).
 - Backend tidak pernah mengakses kamera atau printer secara langsung.
-- Desktop tidak pernah mengakses PostgreSQL, Midtrans, atau WhatsApp API secara langsung.
+- Desktop tidak pernah mengakses PostgreSQL, Midtrans, atau Layanan Email secara langsung.
 
 ---
 
@@ -180,7 +180,7 @@ Bertanggung jawab atas:
 | Validasi | Zod + Fastify schemas | Runtime type checking, integrasi TypeScript |
 | Auth | JWT (jsonwebtoken) + Argon2id (argon2) | Stateless auth token, hashing PIN aman |
 | Payments | Midtrans Node.js SDK / HTTP client | Integrasi QRIS resmi |
-| Messaging | WhatsApp Cloud API (axios) | Pengiriman pesan resmi Meta |
+| Messaging | Nodemailer (SMTP) | Pengiriman soft file via server SMTP resmi |
 | Storage | AWS SDK v3 / S3-compatible | Upload foto ke object storage |
 | Logging | Pino (bawaan Fastify) | Structured JSON logging |
 | Testing | Vitest + Supertest | Unit test + integration test |
@@ -221,7 +221,7 @@ server/
 │   │   ├── payments.routes.ts  # POST /api/payments, GET status
 │   │   ├── photos.routes.ts    # POST /api/photos
 │   │   ├── gallery.routes.ts   # POST /api/gallery, GET /g/:token
-│   │   ├── delivery.routes.ts  # POST /api/delivery/whatsapp
+│   │   ├── delivery.routes.ts  # POST /api/sessions/:sessionId/email
 │   │   ├── reports.routes.ts   # GET /api/reports/*
 │   │   ├── webhooks.routes.ts  # POST /api/webhooks/midtrans
 │   │   └── system.routes.ts    # GET /api/system/version
@@ -233,12 +233,9 @@ server/
 │   │   ├── photo.service.ts
 │   │   ├── gallery.service.ts
 │   │   ├── delivery.service.ts
+│   │   ├── email.service.ts
 │   │   ├── report.service.ts
 │   │   └── webhook.service.ts
-│   ├── adapters/
-│   │   ├── midtrans.adapter.ts
-│   │   ├── whatsapp.adapter.ts
-│   │   └── storage.adapter.ts
 │   ├── middleware/
 │   │   ├── auth.middleware.ts   # JWT verification
 │   │   └── error.middleware.ts  # Global error handler

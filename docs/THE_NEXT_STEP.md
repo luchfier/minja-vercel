@@ -25,10 +25,10 @@ Proyek **MinjaPhotobooth V2** telah menyelesaikan fase pondasi arsitektur (*Arch
 | **Dual-Mode Adapter** | ✅ **Selesai** | `httpPhotoboothApi.ts` + Mock Fallback | Terhubung ke backend PostgreSQL, dengan fallback offline otomatis (*zero-downtime*). |
 | **One-Command Runner** | ✅ **Selesai** | `concurrently` di root `package.json` | `npm.cmd run dev` menyalakan backend dan frontend sekaligus dalam 1 terminal. |
 | **Pilar 1: Payment Gateway** | ✅ **Selesai** | Midtrans QRIS, Webhook, Settle | Webhook SHA512 signature, polling reconciler, cash desk audit confirmation. |
-| **Pilar 2: Kamera & Capture** | ✅ **Selesai** | Canon EOS / UVC Probe, Strobe Flash | Safe zone 4R, smile cue shimmer audio, foot pedal clicker (`Space`/`Enter`/`PageDown`). |
+| **Pilar 2: Kamera & Capture** | ✅ **Selesai** | Canon EOS / UVC Probe, Strobe Flash | Safe zone 4R, smile cue shimmer audio, tombol sentuh layar (touchscreen). |
 | **Pilar 3: Cetak Fisik 4R** | ✅ **Selesai** | Windows Spooler Native PowerShell | 300 DPI 1200x1800 px silent print, background worker, reprint audit log. |
 | **Pilar 4: Desktop Kiosk** | ✅ **Selesai** | Electron 33, Lockout, Watchdog | Single instance lock, context bridge, emergency exit (`Ctrl+Shift+Q`), backend auto-start. |
-| **Pilar 5: Distribusi Digital**| ✅ **Selesai** | S3 / Cloudflare R2, WhatsApp API | 48h tokenized private gallery, Meta Cloud API, smartphone download page. |
+| **Pilar 5: Distribusi Digital**| ✅ **Selesai** | S3 / Cloudflare R2, Layanan Email (SMTP) | 48h tokenized private gallery, Nodemailer SMTP, smartphone download page. |
 
 ---
 
@@ -48,7 +48,7 @@ graph TD
         Pilar2[2. Integrasi Kamera Canon/Webcam & Audio Cue ✅]
         Pilar3[3. Integrasi Cetak Fisik 4R Windows Spooler ✅]
         Pilar4[4. Desktop Kiosk Packaging Electron 33 ✅]
-        Pilar5[5. Cloud Storage R2/S3 & WhatsApp Cloud API ✅]
+        Pilar5[5. Cloud Storage R2/S3 & Layanan Email SMTP ✅]
     end
 
     UI --> Pilar1
@@ -153,7 +153,7 @@ sequenceDiagram
 ## 4. Pilar 3: Integrasi Cetak Fisik 4R (Windows Print Spooler)
 
 ### 4.1 Persyaratan Cetak Lab 4R
-- **Ukuran Kertas:** 4R = 4 × 6 inci = 101.6 × 152.4 mm.
+- **Ukuran Kertas:** Standar Studio 10 × 15 cm (4R).
 - **Resolusi Cetak:** 300 DPI (Dots Per Inch) minimum.
 - **Dimensi Kanvas:** 
   - Portrait: **1200 × 1800 piksel**.
@@ -222,7 +222,7 @@ const mainWindow = new BrowserWindow({
 
 ---
 
-## 6. Pilar 5: Distribusi Digital (Cloud Storage & WhatsApp API)
+## 6. Pilar 5: Distribusi Digital (Cloud Storage & Layanan Email SMTP)
 
 ### 6.1 Galeri Privat Berbatas Waktu (Cloudflare R2 / AWS S3)
 1. Setelah sesi foto selesai, foto final 4R diunggah ke Object Storage yang kompatibel dengan S3 (misal: **Cloudflare R2** dengan biaya egress $0).
@@ -231,9 +231,9 @@ const mainWindow = new BrowserWindow({
 3. Link ini dijadikan **QR Code** di layar *DeliveryScreen* untuk di-scan smartphone pelanggan.
 4. Auto-deletion / Expiry job berjalan setiap 48 jam untuk menghapus file lama sesuai kebijakan retensi privasi.
 
-### 6.2 WhatsApp Cloud API (Pengiriman Otomatis)
-1. Pelanggan memasukkan nomor HP di numpad layar sentuh.
-2. Backend mengirim pesan template resmi melalui **WhatsApp Business Cloud API** (Meta):
+### 6.2 Layanan Email SMTP (Pengiriman Otomatis)
+1. Pelanggan memasukkan alamat email di virtual keyboard layar sentuh dengan shortcut domain (@gmail.com, dll).
+2. Backend mengirim email template HTML responsif melalui **Nodemailer SMTP** (Gmail, Google Workspace, domain hosting):
    *"Halo Kak! Terima kasih sudah berfoto di Minja Photobooth. Foto kenangan Anda dapat diunduh di link berikut: [Link Galeri] (Aktif selama 48 jam)."*
 
 ---
@@ -258,7 +258,7 @@ gantt
     Pipeline Cetak Silent Print 4R (Sharp)  :t6, after t5, 3d
     
     section Tahap 4: Distribusi & Rilis
-    Cloudflare R2 & WhatsApp Cloud API      :t7, after t6, 3d
+    Cloudflare R2 & Layanan Email SMTP      :t7, after t6, 3d
     Windows Installer (.exe) & Field Test   :t8, after t7, 3d
 ```
 

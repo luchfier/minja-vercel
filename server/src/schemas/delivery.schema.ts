@@ -1,23 +1,29 @@
 // src/schemas/delivery.schema.ts
-// Zod schemas untuk Distribusi Digital (WhatsApp & Cloud Storage Gallery)
-// Sesuai ARCHITECTURE.md §4.2, §5.1 & THE_NEXT_STEP.md §6
+// Zod schemas untuk Distribusi Digital (Email Delivery & Cloud Storage Gallery)
 
 import { z } from 'zod';
 
-export const sendWhatsAppSchema = z.object({
-  phoneNumber: z
+export const sendEmailSchema = z.object({
+  email: z
     .string()
     .trim()
-    .min(9, 'Nomor telepon minimal 9 digit')
-    .max(18, 'Nomor telepon maksimal 18 digit')
-    .regex(/^[0-9+ \-]+$/, 'Format nomor WhatsApp hanya boleh angka dan tanda plus'),
+    .min(5, 'Alamat email minimal 5 karakter')
+    .max(100, 'Alamat email maksimal 100 karakter')
+    .email('Format alamat email tidak valid'),
 });
 
 export const uploadGalleryFileSchema = z.object({
-  fileType: z.enum(['layout_4r', 'gif', 'live_video', 'raw_photo']).default('layout_4r'),
+  fileType: z
+    .preprocess((val) => {
+      if (val === 'print_strip') return 'layout_4r';
+      if (val === 'single_photo') return 'raw_photo';
+      if (val === 'animated_gif') return 'layout_4r';
+      return val;
+    }, z.enum(['layout_4r', 'live_video', 'raw_photo']))
+    .default('layout_4r'),
   dataUrl: z.string().min(1, 'Data URL / base64 content wajib disertakan'),
   fileName: z.string().optional(),
 });
 
-export type SendWhatsAppInput = z.infer<typeof sendWhatsAppSchema>;
+export type SendEmailInput = z.infer<typeof sendEmailSchema>;
 export type UploadGalleryFileInput = z.infer<typeof uploadGalleryFileSchema>;

@@ -150,8 +150,8 @@ export enum ErrorCode {
   GALLERY_NOT_FOUND = "GALLERY_NOT_FOUND",
   GALLERY_EXPIRED = "GALLERY_EXPIRED",
   GALLERY_TOKEN_INVALID = "GALLERY_TOKEN_INVALID",
-  WHATSAPP_DELIVERY_FAILED = "WHATSAPP_DELIVERY_FAILED",
-  WHATSAPP_INVALID_PHONE = "WHATSAPP_INVALID_PHONE",
+  EMAIL_DELIVERY_FAILED = "EMAIL_DELIVERY_FAILED",
+  EMAIL_INVALID_ADDRESS = "EMAIL_INVALID_ADDRESS",
   STORAGE_UPLOAD_FAILED = "STORAGE_UPLOAD_FAILED",
 
   // === System ===
@@ -301,7 +301,7 @@ interface AdminSettingsResponse extends PublicSettingsResponse {
   selectedCameraId: string | null;
   selectedPrinterName: string | null;
   autoResetSeconds: number;
-  whatsappEnabled: boolean;
+  emailDeliveryEnabled: boolean;
   galleryEnabled: boolean;
 }
 ```
@@ -331,7 +331,7 @@ interface UpdateSettingsRequest {
   selectedCameraId?: string | null;
   selectedPrinterName?: string | null;
   autoResetSeconds?: number;   // min: 10, max: 120
-  whatsappEnabled?: boolean;
+  emailDeliveryEnabled?: boolean;
   galleryEnabled?: boolean;
   maintenanceMode?: boolean;
 }
@@ -1238,41 +1238,38 @@ interface GalleryPublicResponse {
 
 ---
 
-### 3.10 Delivery (Pengiriman WhatsApp)
+### 3.10 Delivery (Pengiriman Soft File Email)
 
-#### `POST /api/delivery/whatsapp`
+#### `POST /api/sessions/:sessionId/email`
 
-Mengirim tautan galeri via WhatsApp Cloud API.
+Mengirim tautan galeri via Layanan Email (SMTP / Nodemailer).
 
 **Auth:** X-Booth-Key
 
 **Request Body:**
 ```typescript
-interface SendWhatsAppRequest {
-  sessionId: string;
-  phoneNumber: string;      // Format E.164: "6281234567890"
-  galleryToken: string;
+interface SendEmailRequest {
+  email: string;      // Format email valid: "user@example.com"
 }
 ```
 
 **Validasi:**
-- `phoneNumber`: format E.164, dimulai dengan kode negara (62 untuk Indonesia)
-- `galleryToken`: harus valid dan belum kadaluwarsa
+- `email`: format email yang valid (contoh: user@gmail.com)
 
-**Response 202:** (Accepted — pengiriman asinkron)
+**Response 200/202:** (Pengiriman email soft file)
 ```typescript
 interface DeliveryJobDto {
   id: string;
   sessionId: string;
-  channel: "whatsapp";
-  phoneNumber: string;
+  channel: "email";
+  email: string;
   status: "queued" | "sent" | "delivered" | "failed";
   retryCount: number;
   createdAt: string;
 }
 ```
 
-**Errors:** `WHATSAPP_INVALID_PHONE`, `GALLERY_TOKEN_INVALID`, `GALLERY_EXPIRED`, `WHATSAPP_DELIVERY_FAILED`
+**Errors:** `EMAIL_INVALID_ADDRESS`, `GALLERY_TOKEN_INVALID`, `GALLERY_EXPIRED`, `EMAIL_DELIVERY_FAILED`
 
 ---
 
@@ -1398,8 +1395,8 @@ interface ReportSummaryResponse {
   totalPhotosPrinted: number;
   totalPrintJobs: number;
   failedPrintJobs: number;
-  totalWhatsAppSent: number;
-  failedWhatsAppDeliveries: number;
+  totalEmailsSent: number;
+  failedEmailDeliveries: number;
 }
 ```
 
@@ -1578,7 +1575,7 @@ interface HealthResponse {
 | 39 | POST | `/api/photos/:id/upload` | Booth-Key | Upload foto |
 | 40 | POST | `/api/gallery` | Booth-Key | Buat galeri |
 | 41 | GET | `/api/gallery/:token` | None (token) | Akses galeri publik |
-| 42 | POST | `/api/delivery/whatsapp` | Booth-Key | Kirim WhatsApp |
+| 42 | POST | `/api/sessions/:sessionId/email` | Booth-Key | Kirim Email Soft File |
 | 43 | GET | `/api/delivery/:id/status` | Booth-Key | Status pengiriman |
 | 44 | GET | `/api/admin/reports/summary` | JWT | Ringkasan laporan |
 | 45 | GET | `/api/admin/reports/transactions` | JWT | Laporan transaksi lengkap |

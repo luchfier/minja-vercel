@@ -19,12 +19,49 @@
     "lint": "npm --prefix frontend run lint && npm --prefix server run lint",
     "db:push": "npm --prefix server run prisma:push",
     "db:seed": "npm --prefix server run prisma:seed",
-    "db:studio": "npm --prefix server run prisma:studio"
+    "db:studio": "npm --prefix server run prisma:studio",
+    "reset-admin": "npm --prefix server run reset-admin",
+    "package": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.minjaphotobooth.kiosk",
+    "productName": "MinjaPhotobooth",
+    "directories": {
+      "output": "dist-package"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "server/scripts/silent-print.ps1",
+        "to": "scripts/silent-print.ps1"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MinjaPhotobooth"
+    }
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "concurrently": "^10.0.6",
     "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
     "typescript": "^7.0.2"
   }
 }

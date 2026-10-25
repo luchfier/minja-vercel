@@ -63,6 +63,8 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
 
   const [devices, setDevices] = useState<CameraDeviceInfo[]>([]);
   const [activeDevice, setActiveDevice] = useState<CameraDeviceInfo | null>(null);
+  const [isSimulated, setIsSimulated] = useState<boolean>(false);
+  const [capturedPhotoPreview, setCapturedPhotoPreview] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [isFlashActive, setIsFlashActive] = useState<boolean>(false);
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
@@ -86,6 +88,7 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
       setActiveDevice(target);
       if (videoRef.current) {
         await cameraAdapter.startLiveView(videoRef.current, deviceId);
+        setIsSimulated(cameraAdapter.isUsingSimulatedStream());
         showToast({
           type: 'info',
           title: 'Kamera Beralih',
@@ -95,34 +98,57 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
     }
   }, [devices, showToast]);
 
-  // Initialize camera and listen to device changes
-  useEffect(() => {
-    let isMounted = true;
-
-    const initCamera = async () => {
+  // Unified camera initialization & retry handler
+  const initCamera = useCallback(async () => {
+    try {
       const devList = await cameraAdapter.listDevices();
-      if (!isMounted) return;
       setDevices(devList);
 
       const defaultDev = devList.find((d) => d.isDefault) || devList[0];
-      setActiveDevice(defaultDev);
+      setActiveDevice(defaultDev || null);
 
       if (videoRef.current) {
         await cameraAdapter.startLiveView(videoRef.current, defaultDev?.id);
+        const usingSim = cameraAdapter.isUsingSimulatedStream();
+        setIsSimulated(usingSim);
+        if (usingSim) {
+          showToast({
+            type: 'warning',
+            title: 'Kamera Fisik Belum Terhubung',
+            message: 'Menggunakan mode simulasi studio. Hubungkan webcam/DroidCam lalu tekan Coba Hubungkan.',
+          });
+        } else if (defaultDev) {
+          showToast({
+            type: 'success',
+            title: 'Kamera Siap 📷',
+            message: `Kamera ${defaultDev.name} aktif.`,
+          });
+        }
       }
-    };
+    } catch (err: any) {
+      console.warn('Gagal inisialisasi kamera:', err);
+    }
+  }, [showToast]);
 
+  // Initialize camera and listen to device changes
+  useEffect(() => {
     initCamera();
+
+    // Pastikan video element terhubung segera setelah selesai mounting di DOM
+    const retryTimer = setTimeout(() => {
+      if (videoRef.current && !cameraAdapter.getActiveDeviceId() && !cameraAdapter.isUsingSimulatedStream()) {
+        initCamera();
+      }
+    }, 250);
 
     // Listen to USB/HDMI camera hot-plug
     const cleanupListener = cameraAdapter.onDeviceChange(async () => {
       const devList = await cameraAdapter.listDevices();
-      if (!isMounted) return;
       setDevices(devList);
     });
 
     return () => {
-      isMounted = false;
+      clearTimeout(retryTimer);
       cleanupListener();
       if (countdownIntervalRef.current) {
         clearInterval(countdownIntervalRef.current);
@@ -132,7 +158,7 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
       }
       cameraAdapter.stopLiveView();
     };
-  }, []);
+  }, [initCamera]);
 
   // Stop / Pause Hands-Free mode safely
   const stopHandsFree = useCallback((notify = false) => {
@@ -174,6 +200,13 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
       const photoDataUrl = await cameraAdapter.capturePhoto(isMirrored);
       onAddPhoto(photoDataUrl);
       playPhotoCapturedSound();
+
+      // Tampilkan preview instan foto yang baru dijepret selama 1.2 detik
+      setCapturedPhotoPreview(photoDataUrl);
+      setTimeout(() => {
+        setCapturedPhotoPreview(null);
+      }, 1200);
+
       return true;
     } catch (err) {
       showToast({
@@ -356,26 +389,6 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
     setShutterMode(mode);
   };
 
-  // Keyboard trigger (Spacebar) for remote clicker or foot pedal
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLSelectElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      if ((e.code === 'Space' || e.code === 'Enter' || e.key === ' ' || e.code === 'PageDown') && !e.repeat) {
-        e.preventDefault();
-        handleShutterAction();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleShutterAction]);
 
   const isLimitReached = photos.length >= maxPhotos;
 
@@ -397,11 +410,7 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
             <select
               value={activeDevice?.id || ''}
               onChange={(e) => {
-                const dev = devices.find((d) => d.id === e.target.value);
-                if (dev && videoRef.current) {
-                  setActiveDevice(dev);
-                  cameraAdapter.startLiveView(videoRef.current, dev.id);
-                }
+                handleSelectDevice(e.target.value);
               }}
               className="bg-transparent text-xs font-bold text-slate-300 outline-none cursor-pointer"
             >
@@ -457,6 +466,9 @@ export const CameraScreen: React.FC<CameraScreenProps> = ({
             onToggleGrid={() => setShowGrid((g) => !g)}
             showSafeZone={showSafeZone}
             onToggleSafeZone={() => setShowSafeZone((s) => !s)}
+            isSimulated={isSimulated}
+            capturedPhotoPreview={capturedPhotoPreview}
+            onRetryConnect={initCamera}
           >
             {/* Cinematic Studio Countdown Overlay */}
             <CountdownOverlay

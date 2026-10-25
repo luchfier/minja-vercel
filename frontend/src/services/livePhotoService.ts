@@ -7,6 +7,7 @@ export interface LivePhotoOptions {
   frameHoldMs?: number;
   transitionMs?: number;
   maxDimension?: number;
+  isBoomerang?: boolean;
 }
 
 export interface LivePhotoResult {
@@ -24,7 +25,9 @@ export interface LivePhotoResult {
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (!src.startsWith('data:')) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => resolve(img);
     img.onerror = (e) => reject(new Error(`Gagal memuat gambar untuk Live Photo: ${e}`));
     img.src = src;
@@ -38,11 +41,11 @@ function getSupportedVideoMimeType(): string {
   if (typeof MediaRecorder === 'undefined') return '';
 
   const candidates = [
-    'video/mp4;codecs=avc1',
-    'video/mp4',
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
     'video/webm',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
   ];
 
   for (const mime of candidates) {
@@ -80,8 +83,15 @@ export async function generateLivePhotoVideo(
     throw new Error('Tidak ada foto valid yang dapat dimuat.');
   }
 
-  // 2. Tentukan resolusi output (720p HD seimbang untuk performa & ketajaman)
-  const baseImg = images[0];
+  // 2. Susun urutan pose foto (Mendukung mode Boomerang reverse-loop yang mulus)
+  let sequenceImages = [...images];
+  if ((options.isBoomerang ?? true) && images.length >= 2) {
+    const reversedMiddle = images.slice(1, -1).reverse();
+    sequenceImages = [...images, ...reversedMiddle];
+  }
+
+  // 3. Tentukan resolusi output (720p HD seimbang untuk performa & ketajaman)
+  const baseImg = sequenceImages[0];
   const maxDim = options.maxDimension || 720;
   let width: number;
   let height: number;
@@ -102,10 +112,10 @@ export async function generateLivePhotoVideo(
   const frameHoldMs = options.frameHoldMs || 700; // 700ms tiap pose
   const transitionMs = options.transitionMs || 200; // 200ms crossfade
   const totalPerPhotoMs = frameHoldMs + transitionMs;
-  const totalDurationMs = images.length * totalPerPhotoMs;
+  const totalDurationMs = sequenceImages.length * totalPerPhotoMs;
   const totalFrames = Math.round((totalDurationMs / 1000) * fps);
 
-  // 3. Setup Canvas
+  // 4. Setup Canvas
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -116,11 +126,11 @@ export async function generateLivePhotoVideo(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
-  // 4. Setup MediaRecorder
+  // 5. Setup MediaRecorder
   const mimeType = getSupportedVideoMimeType();
   const stream = canvas.captureStream(fps);
   const recorder = mimeType
-    ? new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 3_000_000 })
+    ? new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2_500_000 })
     : new MediaRecorder(stream);
 
   const chunks: Blob[] = [];
@@ -131,11 +141,23 @@ export async function generateLivePhotoVideo(
   };
 
   return new Promise<LivePhotoResult>((resolve, reject) => {
-    recorder.onerror = (e) => reject(e);
+    let isFinished = false;
+
+    recorder.onerror = (e) => {
+      isFinished = true;
+      reject(e);
+    };
 
     recorder.onstop = () => {
+      isFinished = true;
       const outputType = recorder.mimeType || mimeType || 'video/webm';
       const videoBlob = new Blob(chunks, { type: outputType });
+
+      if (videoBlob.size === 0) {
+        reject(new Error('MediaRecorder menghasilkan video 0 byte (gagal encode stream).'));
+        return;
+      }
+
       const videoUrl = URL.createObjectURL(videoBlob);
 
       resolve({
@@ -148,35 +170,44 @@ export async function generateLivePhotoVideo(
       });
     };
 
-    recorder.start();
+    // Minta chunk setiap 150ms agar data mengalir terus menerus
+    try {
+      recorder.start(150);
+    } catch {
+      recorder.start();
+    }
 
-    // 5. Render loop per frame
+    // 6. Render loop per frame secara teratur tanpa bergantung eksklusif pada requestAnimationFrame
     let currentFrame = 0;
+    const intervalMs = 1000 / fps;
 
-    const renderNextFrame = () => {
+    const renderStep = () => {
+      if (isFinished) return;
+
       if (currentFrame >= totalFrames) {
-        // Beri sedikit buffer sebelum stop recorder
         setTimeout(() => {
           try {
-            recorder.stop();
+            if (recorder.state === 'recording') {
+              recorder.stop();
+            }
           } catch (e) {
             console.warn('[LivePhotoService] Recorder already stopped:', e);
           }
-        }, 100);
+        }, 200);
         return;
       }
 
       const elapsedMs = (currentFrame / fps) * 1000;
-      const photoIndex = Math.floor(elapsedMs / totalPerPhotoMs) % images.length;
-      const nextIndex = (photoIndex + 1) % images.length;
+      const photoIndex = Math.floor(elapsedMs / totalPerPhotoMs) % sequenceImages.length;
+      const nextIndex = (photoIndex + 1) % sequenceImages.length;
       const timeInPhoto = elapsedMs % totalPerPhotoMs;
 
       // Hitung progress zoom halus (Ken Burns 1.0 -> 1.04)
       const zoomProgress = timeInPhoto / totalPerPhotoMs;
       const scale = 1.0 + zoomProgress * 0.04;
 
-      const curImg = images[photoIndex];
-      const nextImg = images[nextIndex];
+      const curImg = sequenceImages[photoIndex];
+      const nextImg = sequenceImages[nextIndex];
 
       // Bersihkan canvas
       ctx.fillStyle = '#000000';
@@ -208,7 +239,7 @@ export async function generateLivePhotoVideo(
       ctx.restore();
 
       // Jika sedang dalam masa transisi crossfade ke foto berikutnya
-      if (timeInPhoto > frameHoldMs && images.length > 1) {
+      if (timeInPhoto > frameHoldMs && sequenceImages.length > 1) {
         const fadeAlpha = (timeInPhoto - frameHoldMs) / transitionMs;
         ctx.save();
         ctx.globalAlpha = Math.min(1, Math.max(0, fadeAlpha));
@@ -234,15 +265,9 @@ export async function generateLivePhotoVideo(
       }
 
       currentFrame++;
-
-      // Jadwalkan frame berikutnya dengan requestAnimationFrame atau timer untuk konsistensi encoding
-      if (typeof requestAnimationFrame !== 'undefined') {
-        requestAnimationFrame(renderNextFrame);
-      } else {
-        setTimeout(renderNextFrame, 1000 / fps);
-      }
+      setTimeout(renderStep, intervalMs);
     };
 
-    renderNextFrame();
+    renderStep();
   });
 }

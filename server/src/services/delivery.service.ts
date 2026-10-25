@@ -1,12 +1,14 @@
 // src/services/delivery.service.ts
-// Service Orkestrasi Distribusi Digital (Galeri Berbatas Waktu & WhatsApp API)
+// Service Orkestrasi Distribusi Digital (Galeri Berbatas Waktu & Email Delivery API)
 // Sesuai ARCHITECTURE.md §4.2, §6.3 & THE_NEXT_STEP.md §6
 
 import crypto from 'node:crypto';
+import os from 'node:os';
 import type { PrismaClient } from '@prisma/client';
-import { StorageService } from './storage.service.js';
-import { WhatsAppService } from './whatsapp.service.js';
+import { StorageService, type SessionGalleryItem } from './storage.service.js';
+import { EmailService } from './email.service.js';
 import { AppError, ErrorCode } from '../types/common.types.js';
+import { getEnv } from '../config/env.js';
 
 export interface GalleryDetails {
   galleryId: string;
@@ -22,8 +24,30 @@ export class DeliveryService {
   constructor(
     private prisma: PrismaClient,
     private storageService: StorageService = new StorageService(),
-    private whatsappService: WhatsAppService = new WhatsAppService()
+    private emailService: EmailService = new EmailService()
   ) {}
+
+  /**
+   * Menentukan base URL galeri (bisa custom domain, cloudflare tunnel, atau auto-detect IP lokal)
+   */
+  public getBaseUrl(): string {
+    const env = getEnv();
+    if (env.GALLERY_BASE_URL && env.GALLERY_BASE_URL.trim().length > 0) {
+      return env.GALLERY_BASE_URL.replace(/\/+$/, '');
+    }
+
+    // Auto-detect IP lokal mesin Kiosk di jaringan Wi-Fi / LAN (misal: 192.168.10.138)
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name] || []) {
+        if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('169.254')) {
+          return `http://${net.address}:${env.PORT || 3000}`;
+        }
+      }
+    }
+
+    return `http://localhost:${env.PORT || 3000}`;
+  }
 
   /**
    * Membuat atau mengambil galeri privat berbatas waktu (48 jam) untuk sebuah sesi
@@ -33,8 +57,28 @@ export class DeliveryService {
       where: { sessionId },
     });
 
+    const settings = await this.prisma.settings.findFirst();
+    const boothName = settings?.boothName || 'Minja Photobooth';
+
     if (existing) {
-      const galleryUrl = `https://gallery.minjaphotobooth.com/s/${sessionId}?token=${existing.token}`;
+      let galleryUrl = '';
+      if (this.storageService.isCloudStorageActive()) {
+        try {
+          galleryUrl = await this.storageService.publishCloudGallery(
+            sessionId,
+            sessionId.slice(-5).toUpperCase(),
+            existing.expiresAt.toISOString(),
+            boothName
+          );
+        } catch (e) {
+          console.warn('[DeliveryService] Fallback ke lokal URL karena publish Cloud Gallery gagal:', e);
+        }
+      }
+
+      if (!galleryUrl) {
+        galleryUrl = `${this.getBaseUrl()}/s/${sessionId}?token=${existing.token}`;
+      }
+
       return {
         galleryId: existing.id,
         sessionId: existing.sessionId,
@@ -94,7 +138,23 @@ export class DeliveryService {
       },
     });
 
-    const galleryUrl = `https://gallery.minjaphotobooth.com/s/${sessionId}?token=${token}`;
+    let galleryUrl = '';
+    if (this.storageService.isCloudStorageActive()) {
+      try {
+        galleryUrl = await this.storageService.publishCloudGallery(
+          sessionId,
+          sessionId.slice(-5).toUpperCase(),
+          created.expiresAt.toISOString(),
+          boothName
+        );
+      } catch (e) {
+        console.warn('[DeliveryService] Fallback ke lokal URL karena publish Cloud Gallery gagal:', e);
+      }
+    }
+
+    if (!galleryUrl) {
+      galleryUrl = `${this.getBaseUrl()}/s/${sessionId}?token=${token}`;
+    }
 
     return {
       galleryId: created.id,
@@ -108,11 +168,11 @@ export class DeliveryService {
   }
 
   /**
-   * Mengirimkan notifikasi tautan unduhan galeri foto via WhatsApp
+   * Mengirimkan notifikasi tautan unduhan galeri foto via Email
    */
-  async sendWhatsAppNotification(
+  async sendEmailNotification(
     sessionId: string,
-    phoneNumber: string
+    email: string
   ): Promise<{ sent: boolean; messageId: string }> {
     const gallery = await this.getOrCreateGallery(sessionId);
 
@@ -120,10 +180,11 @@ export class DeliveryService {
     const settings = await this.prisma.settings.findFirst();
     const boothName = settings?.boothName || 'Minja Photobooth';
 
-    const sendRes = await this.whatsappService.sendGalleryNotification(
-      phoneNumber,
+    const sendRes = await this.emailService.sendGalleryNotification(
+      email,
       gallery.galleryUrl,
-      boothName
+      boothName,
+      sessionId
     );
 
     // Catat DeliveryJob ke database untuk audit pengiriman
@@ -132,8 +193,8 @@ export class DeliveryService {
         data: {
           sessionId,
           galleryId: gallery.galleryId,
-          channel: 'whatsapp',
-          phoneNumber: sendRes.recipientPhone,
+          channel: 'email',
+          email: sendRes.recipientEmail,
           status: 'sent',
           messageId: sendRes.messageId,
           sentAt: new Date(),
@@ -154,14 +215,30 @@ export class DeliveryService {
    */
   async uploadGalleryFile(
     sessionId: string,
-    fileType: 'layout_4r' | 'gif' | 'live_video' | 'raw_photo',
+    fileType: 'layout_4r' | 'live_video' | 'raw_photo',
     dataUrl: string,
     customName?: string
   ): Promise<{ url: string; sizeBytes: number }> {
-    const ext = fileType === 'gif' ? 'gif' : fileType === 'live_video' ? 'mp4' : 'jpg';
-    const fileName = customName || `${fileType}_${Date.now()}.${ext}`;
-    const mimeType =
-      ext === 'gif' ? 'image/gif' : ext === 'mp4' ? 'video/mp4' : 'image/jpeg';
+    let ext = fileType === 'live_video' ? 'mp4' : 'jpg';
+    let mimeType = fileType === 'live_video' ? 'video/mp4' : 'image/jpeg';
+
+    if (dataUrl.startsWith('data:')) {
+      const mimeMatch = dataUrl.match(/^data:([^;,]+)/);
+      if (mimeMatch && mimeMatch[1]) {
+        mimeType = mimeMatch[1].toLowerCase();
+        if (mimeType.includes('webm')) ext = 'webm';
+        else if (mimeType.includes('mp4')) ext = 'mp4';
+        else if (mimeType.includes('png')) ext = 'png';
+        else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = 'jpg';
+      }
+    }
+
+    let fileName = customName;
+    if (!fileName) {
+      fileName = `${fileType}_${Date.now()}.${ext}`;
+    } else if (fileType === 'live_video' && ext === 'webm' && fileName.endsWith('.mp4')) {
+      fileName = fileName.replace(/\.mp4$/i, '.webm');
+    }
 
     const result = await this.storageService.uploadFile(
       sessionId,
@@ -169,6 +246,25 @@ export class DeliveryService {
       dataUrl,
       mimeType
     );
+
+    // Otomatis refresh publikasi galeri Cloudflare R2 di background agar file baru langsung muncul di HTML galeri
+    if (this.storageService.isCloudStorageActive()) {
+      (async () => {
+        try {
+          const gallery = await this.prisma.gallery.findUnique({ where: { sessionId } });
+          const settings = await this.prisma.settings.findFirst();
+          const boothName = settings?.boothName || 'Minja Photobooth';
+          await this.storageService.publishCloudGallery(
+            sessionId,
+            sessionId.slice(-5).toUpperCase(),
+            gallery?.expiresAt?.toISOString() || new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
+            boothName
+          );
+        } catch (err) {
+          console.warn('[DeliveryService] Gagal merefresh Cloud Gallery setelah upload:', err);
+        }
+      })();
+    }
 
     return {
       url: result.publicUrl,
@@ -227,6 +323,62 @@ export class DeliveryService {
       isExpired: false,
       files,
       accessCount: gallery.accessCount + 1,
+    };
+  }
+
+  /**
+   * Mengambil data galeri terstruktur untuk rendering template halaman web mobile
+   */
+  async getGalleryHtmlData(
+    sessionId: string,
+    token: string
+  ): Promise<{
+    boothName: string;
+    sessionId: string;
+    sessionCode: string;
+    expiresAt: string;
+    items: SessionGalleryItem[];
+  }> {
+    const gallery = await this.prisma.gallery.findUnique({
+      where: { sessionId },
+      include: {
+        session: true,
+      },
+    });
+
+    if (!gallery || gallery.token !== token) {
+      throw new AppError(
+        404,
+        ErrorCode.GALLERY_TOKEN_INVALID,
+        'Tautan galeri tidak valid atau token verifikasi salah.'
+      );
+    }
+
+    if (new Date() > gallery.expiresAt) {
+      throw new AppError(
+        410,
+        ErrorCode.GALLERY_EXPIRED,
+        'Masa aktif galeri foto telah berakhir (maksimal 48 jam).'
+      );
+    }
+
+    // Update access count
+    await this.prisma.gallery.update({
+      where: { id: gallery.id },
+      data: { accessCount: { increment: 1 } },
+    });
+
+    const settings = await this.prisma.settings.findFirst();
+    const boothName = settings?.boothName || 'Minja Photobooth';
+
+    const items = await this.storageService.listSessionGalleryItems(sessionId);
+
+    return {
+      boothName,
+      sessionId,
+      sessionCode: gallery.session.id.slice(-5).toUpperCase(),
+      expiresAt: gallery.expiresAt.toISOString(),
+      items,
     };
   }
 }

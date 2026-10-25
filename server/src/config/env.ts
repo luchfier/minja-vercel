@@ -22,10 +22,23 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
 
-  // WhatsApp Cloud API (opsional saat development)
-  WHATSAPP_ACCESS_TOKEN: z.string().default(''),
-  WHATSAPP_PHONE_NUMBER_ID: z.string().default(''),
-  WHATSAPP_BUSINESS_ACCOUNT_ID: z.string().default(''),
+  // Email Delivery (SMTP)
+  SMTP_HOST: z.string().default('smtp.gmail.com'),
+  SMTP_PORT: z
+    .string()
+    .default('587')
+    .transform((v) => parseInt(v, 10)),
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASS: z.string().default(''),
+  SMTP_FROM: z.string().default('Minja Photobooth <noreply@minjaphotobooth.com>'),
+
+  // Email Delivery via Resend (HTTPS REST Port 443 — Bebas Blokir ISP)
+  RESEND_API_KEY: z.string().default(''),
+  RESEND_FROM: z.string().default('Minja Photobooth <onboarding@resend.dev>'),
 
   // Object Storage (opsional saat development)
   S3_ENDPOINT: z.string().default(''),
@@ -33,6 +46,9 @@ const envSchema = z.object({
   S3_SECRET_KEY: z.string().default(''),
   S3_BUCKET_NAME: z.string().default('minjaphotobooth'),
   S3_REGION: z.string().default('auto'),
+
+  // Digital Gallery Public URL
+  GALLERY_BASE_URL: z.string().default(''),
 
   // App
   NODE_ENV: z

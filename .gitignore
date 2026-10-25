@@ -51,3 +51,7 @@ $RECYCLE.BIN/
 # Log Sistem
 logs/
 *.log
+
+# Folder Kloningan Lokal / Repositori Terpisah
+Minja-Beta/
+Minja-Project/

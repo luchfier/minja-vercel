@@ -101,7 +101,7 @@ export const PackageCard: React.FC<PackageCardProps> = ({
               </span>
             </div>
             <span className="text-base font-extrabold text-white">
-              {pkg.printCopies} Lembar Foto
+              {pkg.printCopies} Lembar Cetak
             </span>
           </div>
         </div>

@@ -50,7 +50,7 @@ export interface IPhotoboothApi {
   getPublicStickers(): Promise<ApiResponse<StickerItem[]>>;
   
   // Delivery
-  sendWhatsApp(sessionId: string, phoneNumber: string): Promise<ApiResponse<{ sent: boolean; messageId: string }>>;
+  sendEmail(sessionId: string, email: string): Promise<ApiResponse<{ sent: boolean; messageId: string }>>;
   getGalleryUrl(sessionId: string): Promise<ApiResponse<{ qrString: string; galleryUrl: string; expiresAt: string }>>;
   uploadGalleryFile?(
     sessionId: string,

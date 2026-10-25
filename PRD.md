@@ -8,7 +8,7 @@
 
 ## 1. Tujuan Produk
 
-MinjaPhotobooth adalah aplikasi photobooth mandiri yang memungkinkan pelanggan membeli paket sesi, mengambil foto, memilih dan mengedit hasil, mencetak foto ukuran 4R, serta menerima soft file melalui QR atau WhatsApp tanpa membutuhkan operator sepanjang sesi.
+MinjaPhotobooth adalah aplikasi photobooth mandiri yang memungkinkan pelanggan membeli paket sesi, mengambil foto, memilih dan mengedit hasil, mencetak foto ukuran 4R, serta menerima soft file melalui QR atau Email tanpa membutuhkan operator sepanjang sesi.
 
 Aplikasi dilengkapi panel admin untuk mengelola tampilan, harga, paket, kamera, printer, sesi, template, dan laporan transaksi.
 
@@ -21,7 +21,7 @@ Aplikasi dilengkapi panel admin untuk mengelola tampilan, harga, paket, kamera, 
 - Melihat dan menghapus hasil foto yang tidak diinginkan.
 - Mengedit foto dengan frame, filter, teks, dan sticker.
 - Menambah jumlah cetak dengan biaya tambahan.
-- Mengunduh foto melalui QR atau menerima tautan melalui WhatsApp.
+- Mengunduh foto melalui QR atau menerima tautan melalui Email.
 
 ### Admin
 - Masuk melalui menu tersembunyi dengan PIN.
@@ -45,7 +45,7 @@ Aplikasi dilengkapi panel admin untuk mengelola tampilan, harga, paket, kamera, 
 10. Pelanggan memilih jumlah cetak dan membayar tambahan bila diperlukan.
 11. Aplikasi merender foto final untuk cetak 4R dan soft file.
 12. Sistem mencetak foto serta menghasilkan QR galeri.
-13. Jika pelanggan memilih WhatsApp, sistem mengirim tautan atau media melalui integrasi resmi.
+13. Jika pelanggan memilih Email, sistem mengirim tautan galeri privat secara instan.
 14. Sistem menampilkan status akhir dan membersihkan data sementara sesuai kebijakan penyimpanan.
 
 ## 4. Persyaratan Fungsional
@@ -102,7 +102,7 @@ Dukungan kamera harus diverifikasi berdasarkan model dan kemampuan driver. Janga
 - Galeri foto berbasis tautan privat.
 - QR khusus untuk galeri, terpisah dari QR pembayaran.
 - Tautan download yang memiliki token acak dan masa berlaku.
-- Integrasi pengiriman WhatsApp.
+- Integrasi pengiriman Email (SMTP / Nodemailer).
 - Status antrean pengiriman dan error.
 - Pengaturan retensi foto yang dapat diubah admin.
 
@@ -150,7 +150,7 @@ Aplikasi baru dinyatakan siap operasional setelah:
 - Hasil edit dapat diekspor dengan resolusi yang sesuai.
 - Test print menghasilkan foto 4R yang benar secara ukuran dan orientasi.
 - QR galeri bisa dibuka dari ponsel lain.
-- Pengiriman WhatsApp diuji pada akun resmi yang digunakan.
+- Pengiriman Email diuji pada server SMTP yang dikonfigurasi.
 - Admin dapat mengubah paket dan tampilan tanpa mengedit kode.
 - Transaksi gagal tidak membuka sesi.
 - Kegagalan internet, kamera, dan printer dapat ditangani.

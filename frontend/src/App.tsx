@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { useSession } from './contexts/SessionContext';
 import { WelcomeScreen } from './pages/customer/WelcomeScreen';
 import { PackageSelectionScreen } from './pages/customer/PackageSelectionScreen';
@@ -8,11 +8,14 @@ import { PhotoEditorScreen } from './pages/customer/PhotoEditorScreen';
 import { AddPrintScreen } from './pages/customer/AddPrintScreen';
 import { DeliveryScreen } from './pages/customer/DeliveryScreen';
 import { PinAuthModal } from './components/admin/PinAuthModal';
-import { AdminLayout } from './pages/admin/AdminLayout';
 import { Modal } from './components/common/Modal';
 import { Button } from './components/common/Button';
 import { useToast } from './components/common/Toast';
 import { Clock, ArrowRight, Printer } from 'lucide-react';
+
+const AdminLayout = lazy(() =>
+  import('./pages/admin/AdminLayout').then((m) => ({ default: m.AdminLayout }))
+);
 
 export const AppContent: React.FC = () => {
   const {
@@ -102,13 +105,22 @@ export const AppContent: React.FC = () => {
     });
   };
 
-  // If Admin is authenticated, render the Admin Control Center
+  // If Admin is authenticated, render the Admin Control Center (Code-Split)
   if (adminToken) {
     return (
-      <AdminLayout
-        token={adminToken}
-        onExitToKiosk={handleExitAdmin}
-      />
+      <Suspense
+        fallback={
+          <div className="w-screen h-screen flex flex-col items-center justify-center bg-slate-950 text-white gap-3">
+            <div className="w-10 h-10 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm font-bold text-slate-300">Memuat Admin Control Center...</span>
+          </div>
+        }
+      >
+        <AdminLayout
+          token={adminToken}
+          onExitToKiosk={handleExitAdmin}
+        />
+      </Suspense>
     );
   }
 

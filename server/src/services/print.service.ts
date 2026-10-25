@@ -108,7 +108,7 @@ export class PrintService {
               displayName: savedMatch?.displayName || p.Name,
               isDefault,
               status: isOffline ? 'disconnected' : 'connected',
-              supportedSizes: ['4R (10x15cm)', '2x6 Strip', 'A4'],
+              supportedSizes: ['10×15 cm (Standar)', '5×15 cm Photo Strip', '21×29.7 cm A4'],
               paperSize: savedMatch?.paperSize || '4R',
               settings: savedMatch?.settings || { borderless: true, orientation: 'portrait' },
             };

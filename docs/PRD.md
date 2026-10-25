@@ -18,7 +18,7 @@ MinjaPhotobooth adalah aplikasi photobooth mandiri (self-service) yang dirancang
 5. Memilih, menghapus, dan mengedit hasil foto (frame, filter, sticker, teks).
 6. Mencetak foto fisik ukuran 4R (10x15 cm) berkualitas tinggi (300 DPI).
 7. Mengunduh soft file foto beresolusi penuh melalui QR code galeri privat.
-8. Menerima soft file langsung ke smartphone melalui WhatsApp Cloud API resmi.
+8. Menerima soft file langsung ke alamat email melalui Layanan Email (SMTP / Nodemailer).
 
 Aplikasi beroperasi secara otomatis tanpa memerlukan operator mendampingi pelanggan sepanjang sesi. Untuk kebutuhan operasional, tersedia **Admin Panel tersembunyi** yang diamankan dengan autentikasi PIN untuk konfigurasi perangkat, tarif, voucher promo, konfirmasi kasir tunai, template, branding, dan audit transaksi.
 
@@ -32,7 +32,7 @@ Aplikasi beroperasi secara otomatis tanpa memerlukan operator mendampingi pelang
 - Dapat memasukkan kode voucher untuk potongan harga sebelum bayar.
 - Fleksibel memilih pembayaran QRIS otomatis atau membayar tunai kepada petugas kasir booth.
 - Memiliki kontrol penuh atas foto yang diambil (retake, pilih foto terbaik).
-- Menerima hasil fisik (cetak) dan digital (QR/WhatsApp) secara instan.
+- Menerima hasil fisik (cetak) dan digital (QR/Email) secara instan.
 
 ### Pengelola / Admin & Petugas Kasir
 - Membuka panel kontrol melalui gestur/area tersembunyi dengan verifikasi PIN aman.
@@ -61,7 +61,7 @@ stateDiagram-v2
     CaptureSession --> PhotoReview: Pengambilan Foto Selesai
     PhotoReview --> PhotoEditor: Pilih Foto Terbaik & Tata Frame
     PhotoEditor --> PrintAndShare: Selesai Edit & Konfirmasi Cetak
-    PrintAndShare --> ThankYou: Proses Cetak 4R & Tampilkan QR Galeri / Kirim WA
+    PrintAndShare --> ThankYou: Proses Cetak 4R & Tampilkan QR Galeri / Kirim Email
     ThankYou --> Idle: Sesi Selesai (Auto Reset Timer)
 ```
 
@@ -78,7 +78,7 @@ stateDiagram-v2
 6. **Review & Seleksi:** Pelanggan melihat galeri thumbnail sesi dan memilih foto yang akan dimasukkan ke template.
 7. **Editor Foto:** Fitur crop, rotasi, filter warna, penambahan frame/template, sticker, dan preview layout cetak.
 8. **Finalisasi & Cetak:** Rendering layout resolusi tinggi 4R (1200x1800 px pada 300 DPI), pengiriman job ke antrean printer Windows.
-9. **Distribusi Digital:** Tampilan QR Code galeri privat berbatas waktu (misal: 48 jam) dan opsi input nomor WhatsApp untuk pengiriman otomatis via WhatsApp Cloud API.
+9. **Distribusi Digital:** Tampilan QR Code galeri privat berbatas waktu (misal: 48 jam) dan opsi input email untuk pengiriman otomatis tautan galeri via Layanan Email (SMTP).
 10. **Pembersihan & Reset:** Sesi ditutup, file sementara dibersihkan dari memori, dan layar kembali ke status Idle.
 
 ---
@@ -145,14 +145,14 @@ Pelanggan dapat memilih antara pembayaran mandiri via QRIS atau pembayaran tunai
 - Manajemen antrean cetak lokal untuk menjamin order tidak hilang jika terjadi paper jam.
 - Fasilitas Reprint khusus Admin dengan pencatatan alasan pada audit log.
 
-### 4.6 Galeri Privat & WhatsApp Cloud API
+### 4.6 Galeri Privat & Layanan Email (SMTP)
 - **QR Galeri:**
   - Mengarahkan pelanggan ke halaman web galeri privat berenkripsi token.
   - Token acak berkekuatan tinggi (UUID v4 / nanoid kriptografis), bukan ID sekuensial.
   - Masa aktif (retensi) dapat diatur oleh Admin (default: 48 jam).
-- **WhatsApp Cloud API:**
-  - Menggunakan API resmi Meta WhatsApp Business Platform.
-  - Pengiriman pesan berbasis template terverifikasi yang melampirkan tautan galeri atau media foto.
+- **Layanan Email (SMTP):**
+  - Menggunakan modul pengiriman email berbasis Nodemailer (SMTP).
+  - Pengiriman email HTML responsif yang memuat tautan unduhan galeri digital privat.
   - Antrean pengiriman asinkron (background queue) dengan mekanisme retry otomatis jika jaringan lokal sempat terputus.
 
 ### 4.7 Admin Panel Tersembunyi
@@ -178,7 +178,7 @@ Pelanggan dapat memilih antara pembayaran mandiri via QRIS atau pembayaran tunai
 ## 5. Persyaratan Non-Fungsional
 
 1. **Keamanan (Security First):**
-   - Kredensial rahasia (Midtrans Server Key, WhatsApp Token, Database Password, Hash Salt) hanya boleh berada di backend via Environment Variables (`.env`).
+   - Kredensial rahasia (Midtrans Server Key, Kredensial SMTP Email, Database Password, Hash Salt) hanya boleh berada di backend via Environment Variables (`.env`).
    - Tidak ada hardcoded credentials atau default PIN yang mudah ditebak.
    - Frontend tidak boleh mengakses langsung sistem berkas (file system) atau shell tanpa melalui kontrak IPC yang terkontrol ketat.
 2. **Kinerja & Responsivitas:**
@@ -212,6 +212,6 @@ Aplikasi MinjaPhotobooth dinyatakan selesai dan siap diproduksi apabila:
 - [ ] Rendering 4R menghasilkan gambar 300 DPI tajam tanpa artefak visual.
 - [ ] Hasil cetak fisik 4R presisi sesuai template dan warna sRGB.
 - [ ] QR code galeri privat dapat dipindai dan dibuka secara instan dari smartphone pelanggan.
-- [ ] Soft file berhasil terkirim melalui WhatsApp Cloud API ke nomor pelanggan yang valid.
+- [ ] Soft file berhasil terkirim melalui Layanan Email (SMTP) ke alamat email pelanggan yang valid.
 - [ ] Admin panel terlindungi PIN dengan fitur konfigurasi paket dan ekspor CSV yang berfungsi 100%.
 - [ ] Database lokal SQLite menyimpan data secara konsisten dan pulih normal saat aplikasi direstart mendadak.

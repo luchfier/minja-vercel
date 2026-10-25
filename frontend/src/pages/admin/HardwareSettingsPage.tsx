@@ -16,6 +16,12 @@ import {
   Layers,
   SunMedium,
   Maximize2,
+  AlertTriangle,
+  RotateCcw,
+  History,
+  Activity,
+  PlayCircle,
+  PauseCircle,
 } from 'lucide-react';
 import { cameraAdapter } from '../../adapters/cameraAdapter';
 import { printerAdapter } from '../../adapters/printerAdapter';
@@ -23,18 +29,21 @@ import {
   CameraDeviceInfo,
   PrinterInfo,
   PrinterCustomConfig,
+  DetailedHardwareStatus,
+  PrintEngineAuditData,
+  PrintQueueStatusData,
 } from '../../types/hardware';
 import { useToast } from '../../components/common/Toast';
 import { Modal } from '../../components/common/Modal';
 
 export const PAPER_PRESETS = [
-  { id: '4R', label: 'Standar Studio (10×15 cm)', desc: '102 × 152 mm (Ukuran Pas Foto Standar)', widthMm: 102, heightMm: 152 },
-  { id: '2x6', label: '2×6 Photo Strip', desc: '51 × 152 mm (Auto Cut)', widthMm: 51, heightMm: 152 },
-  { id: '5R', label: '5R Medium', desc: '127 × 178 mm (13×18 cm)', widthMm: 127, heightMm: 178 },
-  { id: '6R', label: '6R Large', desc: '152 × 203 mm (15×20 cm)', widthMm: 152, heightMm: 203 },
-  { id: 'Square', label: 'Square (1:1)', desc: '102 × 102 mm Persegi', widthMm: 102, heightMm: 102 },
-  { id: 'A4', label: 'A4 Sheet', desc: '210 × 297 mm Dokumen', widthMm: 210, heightMm: 297 },
-  { id: 'CUSTOM', label: '➕ Ukuran Custom', desc: 'Input Dimensi Bebas (mm)', widthMm: 100, heightMm: 150 },
+  { id: '4R', label: 'Standar Studio (10×15 cm)', desc: '10 × 15 cm (Ukuran Foto Standar Studio)', widthMm: 100, heightMm: 150 },
+  { id: '2x6', label: 'Photo Strip (5×15 cm)', desc: '5 × 15 cm (Auto Cut Strip)', widthMm: 50, heightMm: 150 },
+  { id: '5R', label: '5R Medium (13×18 cm)', desc: '13 × 18 cm', widthMm: 130, heightMm: 180 },
+  { id: '6R', label: '6R Large (15×20 cm)', desc: '15 × 20 cm', widthMm: 150, heightMm: 200 },
+  { id: 'Square', label: 'Square (10×10 cm)', desc: '10 × 10 cm Persegi', widthMm: 100, heightMm: 100 },
+  { id: 'A4', label: 'A4 Sheet (21×29.7 cm)', desc: '21 × 29.7 cm Dokumen', widthMm: 210, heightMm: 297 },
+  { id: 'CUSTOM', label: '➕ Ukuran Custom (cm)', desc: 'Input Dimensi Bebas (cm)', widthMm: 100, heightMm: 150 },
 ];
 
 export const HardwareSettingsPage: React.FC = () => {
@@ -63,8 +72,8 @@ export const HardwareSettingsPage: React.FC = () => {
       autoCut: true,
       dpi: 300,
       customPaperName: 'Standar Studio (10×15 cm)',
-      customPaperWidthMm: 102,
-      customPaperHeightMm: 152,
+      customPaperWidthMm: 100,
+      customPaperHeightMm: 150,
       printQuality: 'photo_fine',
       mediaType: 'glossy',
       sharpening: 'medium',
@@ -89,6 +98,104 @@ export const HardwareSettingsPage: React.FC = () => {
   const [reprintCopies, setReprintCopies] = useState(1);
   const [isSubmittingReprint, setIsSubmittingReprint] = useState(false);
 
+  // Real-Time Printer Telemetry & Queue States
+  const [hardwareStatus, setHardwareStatus] = useState<DetailedHardwareStatus | null>(null);
+  const [queueStatus, setQueueStatus] = useState<PrintQueueStatusData | null>(null);
+  const [auditData, setAuditData] = useState<PrintEngineAuditData | null>(null);
+  const [isResumingQueue, setIsResumingQueue] = useState(false);
+  const [isCancelingJob, setIsCancelingJob] = useState(false);
+
+  const getCategoryInfo = (category?: string) => {
+    switch (category) {
+      case 'inkjet':
+        return {
+          label: 'Inkjet Konvensional (Epson L-Series / Canon Pixma / HP)',
+          shortLabel: 'Inkjet Foto',
+          desc: 'Kertas lembaran 10×15 cm, dye/pigment ink tank',
+          badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+        };
+      case 'dyesub':
+        return {
+          label: 'Dye-Sublimation Studio (DNP DS-RX1 / Citizen / HiTi)',
+          shortLabel: 'Dye-Sub Lab',
+          desc: 'Roll dye-sub thermal, high-speed instant cut borderless',
+          badgeClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+        };
+      case 'selphy':
+        return {
+          label: 'Canon SELPHY CP-Series (CP1300 / CP1500)',
+          shortLabel: 'Canon SELPHY',
+          desc: 'Postcard cassette 10×15 cm, thermal transfer 4-pass',
+          badgeClass: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+        };
+      case 'surelab':
+        return {
+          label: 'Dry Minilab Pro (Epson SureLab SL-D530 / D1030)',
+          shortLabel: 'Epson SureLab',
+          desc: 'Ultra fine studio roll & tray minilab printing',
+          badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+        };
+      default:
+        return {
+          label: 'Windows Standard Spooler',
+          shortLabel: 'Standard Spooler',
+          desc: 'Spooler standar Windows OS',
+          badgeClass: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+        };
+    }
+  };
+
+  const getIssueDescription = (issue: string) => {
+    switch (issue) {
+      case 'paper_out':
+        return {
+          title: 'Kertas Habis (Paper Out)',
+          desc: 'Baki kertas kosong. Masukkan kertas foto 10×15 cm lalu klik "Lanjutkan Antrean".',
+        };
+      case 'paper_jam':
+        return {
+          title: 'Kertas Macet (Paper Jam)',
+          desc: 'Kertas tersangkut di jalur roller. Buka baki, tarik perlahan kertas yang tersangkut.',
+        };
+      case 'door_open':
+        return {
+          title: 'Penutup Terbuka (Door/Cover Open)',
+          desc: 'Penutup cover printer terbuka. Tutup cover printer hingga terdengar bunyi klik.',
+        };
+      case 'toner_or_ribbon_out':
+        return {
+          title: 'Tinta / Ribbon Habis',
+          desc: 'Cartridge tinta atau pita ribbon dye-sub habis. Ganti ribbon/tinta baru.',
+        };
+      case 'offline':
+        return {
+          title: 'Kabel USB Terputus / Printer Offline',
+          desc: 'Printer tidak merespons di port USB Windows. Periksa kabel USB dan daya listrik.',
+        };
+      default:
+        return {
+          title: issue,
+          desc: 'Pemeriksaan status hardware printer Windows.',
+        };
+    }
+  };
+
+  const loadTelemetry = async (targetPrinterName?: string) => {
+    const target = targetPrinterName || (isManualPrinterMode ? manualPrinterInput : printerConfig.printerName);
+    try {
+      const [hw, q, audit] = await Promise.all([
+        target ? printerAdapter.getHardwareStatus(target) : Promise.resolve(null),
+        printerAdapter.getQueue(),
+        printerAdapter.getAuditStats(),
+      ]);
+      setHardwareStatus(hw);
+      setQueueStatus(q);
+      setAuditData(audit);
+    } catch (err) {
+      console.warn('Gagal memuat telemetri printer:', err);
+    }
+  };
+
   const loadDevices = async () => {
     setIsLoading(true);
     try {
@@ -106,6 +213,7 @@ export const HardwareSettingsPage: React.FC = () => {
           setManualPrinterInput(activeCfg.printerName);
         }
       }
+      await loadTelemetry(activeCfg?.printerName);
     } finally {
       setIsLoading(false);
     }
@@ -113,10 +221,67 @@ export const HardwareSettingsPage: React.FC = () => {
 
   useEffect(() => {
     loadDevices();
+
+    // Auto-poll telemetry every 4 seconds for live hardware checks
+    const interval = setInterval(() => {
+      loadTelemetry();
+    }, 4000);
+
+    // Event-driven real-time updates from PrintEngine
+    const unsubs = [
+      printerAdapter.onPrinterEvent('printer:event:queue-paused', () => loadTelemetry()),
+      printerAdapter.onPrinterEvent('printer:event:queue-resumed', () => loadTelemetry()),
+      printerAdapter.onPrinterEvent('printer:event:sheet-printed', () => loadTelemetry()),
+      printerAdapter.onPrinterEvent('printer:event:job-completed', () => loadTelemetry()),
+      printerAdapter.onPrinterEvent('printer:event:job-failed', () => loadTelemetry()),
+    ];
+
     return () => {
       cameraAdapter.stopLiveView();
+      clearInterval(interval);
+      unsubs.forEach((u) => u && u());
     };
-  }, []);
+  }, [printerConfig.printerName, isManualPrinterMode, manualPrinterInput]);
+
+  const handleResumeQueue = async () => {
+    setIsResumingQueue(true);
+    try {
+      const ok = await printerAdapter.manualResume();
+      if (ok) {
+        showToast({
+          type: 'success',
+          title: 'Antrean Dilanjutkan',
+          message: 'Pencetakan lembar foto berhasil dilanjutkan ke printer.',
+        });
+        await loadTelemetry();
+      } else {
+        showToast({
+          type: 'error',
+          title: 'Belum Siap Melanjutkan',
+          message: 'Printer masih melaporkan kendala hardware atau offline. Pastikan kertas sudah terisi.',
+        });
+      }
+    } finally {
+      setIsResumingQueue(false);
+    }
+  };
+
+  const handleCancelJob = async () => {
+    setIsCancelingJob(true);
+    try {
+      const ok = await printerAdapter.cancelJob();
+      if (ok) {
+        showToast({
+          type: 'info',
+          title: 'Job Dibatalkan',
+          message: 'Pekerjaan cetak yang bermasalah berhasil dibatalkan dari antrean spooler.',
+        });
+        await loadTelemetry();
+      }
+    } finally {
+      setIsCancelingJob(false);
+    }
+  };
 
   const handleSetPrimaryCamera = async (camId: string) => {
     cameraAdapter.setPreferredDeviceId(camId);
@@ -229,7 +394,7 @@ export const HardwareSettingsPage: React.FC = () => {
               status: 'connected',
               paperSize: saved.paperSize,
               settings: saved.settings,
-              supportedSizes: ['10x15cm (Standard)', '2x6 Strip', 'Custom'],
+              supportedSizes: ['10×15 cm (Standar)', '5×15 cm Photo Strip', 'Custom cm'],
             },
             ...prev.map((p) => ({ ...p, isDefault: false })),
           ];
@@ -534,7 +699,10 @@ export const HardwareSettingsPage: React.FC = () => {
                       {!ptr.isDefault && (
                         <button
                           type="button"
-                          onClick={() => handleSetPrimaryPrinter(ptr.name)}
+                          onClick={() => {
+                            handleSetPrimaryPrinter(ptr.name);
+                            loadTelemetry(ptr.name);
+                          }}
                           className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/5 hover:bg-sky-400/20 hover:text-sky-300 hover:border-sky-400/40 active:scale-95 text-slate-300 border border-white/10 transition-all cursor-pointer"
                         >
                           Pilih
@@ -552,6 +720,170 @@ export const HardwareSettingsPage: React.FC = () => {
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+
+            {/* Live Hardware Telemetry & Real-Time Sensor Health Card */}
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-sky-500/30 space-y-3 shadow-lg">
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Telemetri Hardware & Sensor Real-Time</h4>
+                    <p className="text-[10px] text-slate-400">
+                      Monitoring status port USB, driver Windows, dan antrean spooler aktif.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => loadTelemetry()}
+                    className="p-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
+                    title="Segarkan Telemetri"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+
+              {/* 3 Telemetry Metric Badges */}
+              {(() => {
+                const selectedPrinter = printers.find((p) => p.name === printerConfig.printerName) || printers.find((p) => p.isDefault) || printers[0];
+                const isOnline = hardwareStatus?.isOnline ?? (selectedPrinter?.status === 'connected');
+                const hasIssues = Boolean(hardwareStatus && hardwareStatus.hardwareIssue && hardwareStatus.hardwareIssue !== 'none');
+                const issueKey = hardwareStatus?.hardwareIssue || 'none';
+                const queueCount = hardwareStatus?.spoolerQueueCount ?? queueStatus?.pendingCount ?? 0;
+                const category = selectedPrinter?.category || hardwareStatus?.category || 'standard';
+                const port = selectedPrinter?.portName || hardwareStatus?.portName || 'USB';
+                const catInfo = getCategoryInfo(category);
+
+                return (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {/* 1. Connection State */}
+                      <div className="p-2.5 rounded-lg bg-slate-950/80 border border-white/10 flex flex-col justify-between">
+                        <span className="text-[10px] text-slate-400">Status Port USB / Spooler:</span>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              isOnline && !hasIssues
+                                ? 'bg-emerald-400'
+                                : hasIssues
+                                ? 'bg-amber-400 animate-ping'
+                                : 'bg-rose-500'
+                            }`}
+                          />
+                          <span
+                            className={`text-xs font-bold font-mono ${
+                              isOnline && !hasIssues
+                                ? 'text-emerald-300'
+                                : hasIssues
+                                ? 'text-amber-300'
+                                : 'text-rose-400'
+                            }`}
+                          >
+                            {isOnline
+                              ? hasIssues
+                                ? 'PERLU ATENSI'
+                                : 'ONLINE (READY)'
+                              : 'OFFLINE / DISCONNECTED'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 2. Spooler Queue Count */}
+                      <div className="p-2.5 rounded-lg bg-slate-950/80 border border-white/10 flex flex-col justify-between">
+                        <span className="text-[10px] text-slate-400">Antrean Windows Spooler:</span>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-xs font-bold font-mono text-white">
+                            {queueCount} Job
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-mono">
+                            {queueStatus?.isPaused ? 'Dijeda' : 'Normal'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 3. Printer Category */}
+                      <div className="p-2.5 rounded-lg bg-slate-950/80 border border-white/10 flex flex-col justify-between">
+                        <span className="text-[10px] text-slate-400">Tipe / Kategori Driver:</span>
+                        <div className="mt-1">
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[9.5px] font-bold border ${catInfo.badgeClass}`}>
+                            {catInfo.shortLabel}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Hardware Sensors Alert Banner (Requirement 6: Deep Sensor Detection if Supported) */}
+                    {hasIssues ? (
+                      <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-xs space-y-1.5 animate-pulse">
+                        <div className="flex items-center gap-2 font-bold text-amber-300">
+                          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                          <span>Perhatian: Sensor Hardware Melaporkan Kendala</span>
+                        </div>
+                        <div className="text-[11px] text-slate-200 pl-6">
+                          <strong className="text-amber-200">{getIssueDescription(issueKey).title}:</strong>{' '}
+                          {hardwareStatus?.issueDescription || getIssueDescription(issueKey).desc}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="px-3 py-1.5 rounded-lg bg-white/[0.02] border border-white/5 flex items-center justify-between text-[10px] text-slate-400">
+                        <span className="flex items-center gap-1.5 text-slate-300">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Sensor hardware siap. Tidak ada kertas macet atau penutup terbuka terdeteksi.</span>
+                        </span>
+                        <span className="font-mono text-[9px] text-slate-500">
+                          Port: {port}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              {/* Queue Failure Recovery Control Panel (Requirement 3a: Paper Out Recovery) */}
+              {queueStatus?.isPaused && (
+                <div className="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/40 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <PauseCircle className="w-4 h-4 text-rose-400" />
+                      <span className="text-xs font-bold text-rose-200">
+                        Antrean Cetak Sedang Dijeda (Recovery Mode)
+                      </span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                      PAUSED
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-200 leading-relaxed">
+                    {queueStatus.currentJob?.errorMessage || 'Kertas habis saat proses cetak berlangsung.'}
+                    {' '}Setelah kertas foto 10×15 cm diisi ke baki printer, sistem akan otomatis melanjutkan atau Anda dapat mengklik tombol di bawah.
+                  </p>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleResumeQueue}
+                      disabled={isResumingQueue}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-md transition-all cursor-pointer"
+                    >
+                      <PlayCircle className="w-3.5 h-3.5" />
+                      <span>{isResumingQueue ? 'Mengecek...' : 'Lanjutkan Antrean (Resume)'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleCancelJob}
+                      disabled={isCancelingJob}
+                      className="py-1.5 px-3 rounded-lg bg-white/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition-all cursor-pointer"
+                    >
+                      <span>{isCancelingJob ? 'Membatalkan...' : 'Batalkan Job Ini'}</span>
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -636,7 +968,7 @@ export const HardwareSettingsPage: React.FC = () => {
                       <span>Preset Ukuran Kertas Cetak:</span>
                     </label>
                     <span className="text-[10px] text-slate-400 font-mono">
-                      Aktif: <strong className="text-sky-300">{printerConfig.paperSize}</strong> ({printerConfig.settings.customPaperWidthMm || 102} × {printerConfig.settings.customPaperHeightMm || 152} mm)
+                      Aktif: <strong className="text-sky-300">{printerConfig.paperSize}</strong> ({((printerConfig.settings.customPaperWidthMm || 100) / 10).toFixed(1)} × {((printerConfig.settings.customPaperHeightMm || 150) / 10).toFixed(1)} cm)
                     </span>
                   </div>
 
@@ -692,10 +1024,10 @@ export const HardwareSettingsPage: React.FC = () => {
                     <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
                       <span className="text-[11px] font-bold text-sky-300 flex items-center gap-1.5">
                         <Maximize2 className="w-3.5 h-3.5 text-sky-400" />
-                        <span>Kustomisasi Dimensi Kertas (Milimeter)</span>
+                        <span>Kustomisasi Dimensi Kertas (Centimeter / cm)</span>
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono">
-                        {(printerConfig.settings.customPaperWidthMm || 102) > (printerConfig.settings.customPaperHeightMm || 152)
+                        {(printerConfig.settings.customPaperWidthMm || 100) > (printerConfig.settings.customPaperHeightMm || 150)
                           ? 'Landscape Canvas'
                           : 'Portrait Canvas'}
                       </span>
@@ -715,56 +1047,56 @@ export const HardwareSettingsPage: React.FC = () => {
                               settings: { ...prev.settings, customPaperName: e.target.value },
                             }))
                           }
-                          placeholder="Misal: Mini Polaroid 3R"
+                          placeholder="Misal: Mini Polaroid 10×10 cm"
                           className="w-full h-8 px-2.5 rounded-lg bg-slate-950 border border-white/15 text-xs text-white"
                         />
                       </div>
 
                       <div>
                         <label className="block text-[10px] font-semibold text-slate-400 mb-1">
-                          Lebar Kertas (Width mm):
+                          Lebar Kertas (Width cm):
                         </label>
                         <div className="flex items-center gap-1.5">
                           <input
                             type="number"
-                            min="30"
-                            max="350"
-                            step="1"
-                            value={printerConfig.settings.customPaperWidthMm || 102}
+                            min="3"
+                            max="35"
+                            step="0.1"
+                            value={Number(((printerConfig.settings.customPaperWidthMm || 100) / 10).toFixed(1))}
                             onChange={(e) => {
-                              const val = Math.max(30, Math.min(350, parseInt(e.target.value) || 102));
+                              const cmVal = Math.max(3, Math.min(35, parseFloat(e.target.value) || 10));
                               setPrinterConfig((prev) => ({
                                 ...prev,
-                                settings: { ...prev.settings, customPaperWidthMm: val },
+                                settings: { ...prev.settings, customPaperWidthMm: Math.round(cmVal * 10) },
                               }));
                             }}
                             className="w-full h-8 px-2.5 rounded-lg bg-slate-950 border border-white/15 text-xs text-white font-mono text-center"
                           />
-                          <span className="text-slate-400 text-[10px]">mm</span>
+                          <span className="text-slate-400 text-[10px]">cm</span>
                         </div>
                       </div>
 
                       <div>
                         <label className="block text-[10px] font-semibold text-slate-400 mb-1">
-                          Tinggi Kertas (Height mm):
+                          Tinggi Kertas (Height cm):
                         </label>
                         <div className="flex items-center gap-1.5">
                           <input
                             type="number"
-                            min="30"
-                            max="450"
-                            step="1"
-                            value={printerConfig.settings.customPaperHeightMm || 152}
+                            min="3"
+                            max="45"
+                            step="0.1"
+                            value={Number(((printerConfig.settings.customPaperHeightMm || 150) / 10).toFixed(1))}
                             onChange={(e) => {
-                              const val = Math.max(30, Math.min(450, parseInt(e.target.value) || 152));
+                              const cmVal = Math.max(3, Math.min(45, parseFloat(e.target.value) || 15));
                               setPrinterConfig((prev) => ({
                                 ...prev,
-                                settings: { ...prev.settings, customPaperHeightMm: val },
+                                settings: { ...prev.settings, customPaperHeightMm: Math.round(cmVal * 10) },
                               }));
                             }}
                             className="w-full h-8 px-2.5 rounded-lg bg-slate-950 border border-white/15 text-xs text-white font-mono text-center"
                           />
-                          <span className="text-slate-400 text-[10px]">mm</span>
+                          <span className="text-slate-400 text-[10px]">cm</span>
                         </div>
                       </div>
                     </div>
@@ -1135,10 +1467,10 @@ export const HardwareSettingsPage: React.FC = () => {
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[11px] font-bold text-slate-300">
-                      Kalibrasi Margin Presisi (Offset Geser mm):
+                      Kalibrasi Margin Presisi (Offset Geser cm):
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono">
-                      Atas: {printerConfig.settings.marginTopMm}mm • Kiri: {printerConfig.settings.marginLeftMm}mm
+                      Atas: {((printerConfig.settings.marginTopMm || 0) / 10).toFixed(2)} cm • Kiri: {((printerConfig.settings.marginLeftMm || 0) / 10).toFixed(2)} cm
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -1146,44 +1478,44 @@ export const HardwareSettingsPage: React.FC = () => {
                       <span className="text-slate-400 text-[10px]">Geser Atas:</span>
                       <input
                         type="number"
-                        min="-5"
-                        max="5"
-                        step="0.5"
-                        value={printerConfig.settings.marginTopMm}
+                        min="-2"
+                        max="2"
+                        step="0.05"
+                        value={Number(((printerConfig.settings.marginTopMm || 0) / 10).toFixed(2))}
                         onChange={(e) =>
                           setPrinterConfig((prev) => ({
                             ...prev,
                             settings: {
                               ...prev.settings,
-                              marginTopMm: parseFloat(e.target.value) || 0,
+                              marginTopMm: Math.round((parseFloat(e.target.value) || 0) * 10),
                             },
                           }))
                         }
                         className="w-16 h-7 px-2 rounded bg-slate-900 border border-white/20 text-white font-mono text-center text-xs"
                       />
-                      <span className="text-slate-400 text-[10px]">mm</span>
+                      <span className="text-slate-400 text-[10px]">cm</span>
                     </div>
 
                     <div className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.02] border border-white/10 text-xs">
                       <span className="text-slate-400 text-[10px]">Geser Kiri:</span>
                       <input
                         type="number"
-                        min="-5"
-                        max="5"
-                        step="0.5"
-                        value={printerConfig.settings.marginLeftMm}
+                        min="-2"
+                        max="2"
+                        step="0.05"
+                        value={Number(((printerConfig.settings.marginLeftMm || 0) / 10).toFixed(2))}
                         onChange={(e) =>
                           setPrinterConfig((prev) => ({
                             ...prev,
                             settings: {
                               ...prev.settings,
-                              marginLeftMm: parseFloat(e.target.value) || 0,
+                              marginLeftMm: Math.round((parseFloat(e.target.value) || 0) * 10),
                             },
                           }))
                         }
                         className="w-16 h-7 px-2 rounded bg-slate-900 border border-white/20 text-white font-mono text-center text-xs"
                       />
-                      <span className="text-slate-400 text-[10px]">mm</span>
+                      <span className="text-slate-400 text-[10px]">cm</span>
                     </div>
                   </div>
                 </div>
@@ -1249,7 +1581,7 @@ export const HardwareSettingsPage: React.FC = () => {
                       Pola Uji sRGB & Grayscale 10-Step
                     </span>
                     <span className="block text-[10px] text-slate-400 font-mono">
-                      Target: {printerConfig.displayName || printerConfig.printerName} • {printerConfig.paperSize} ({printerConfig.settings.customPaperWidthMm || 102}×{printerConfig.settings.customPaperHeightMm || 152} mm @ {printerConfig.settings.dpi || 300} DPI)
+                      Target: {printerConfig.displayName || printerConfig.printerName} • {printerConfig.paperSize} ({((printerConfig.settings.customPaperWidthMm || 100) / 10).toFixed(1)} × {((printerConfig.settings.customPaperHeightMm || 150) / 10).toFixed(1)} cm @ {printerConfig.settings.dpi || 300} DPI)
                     </span>
                   </div>
                 </div>
@@ -1277,6 +1609,225 @@ export const HardwareSettingsPage: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ========================================================= */}
+      {/* AUDIT & LOG CETAK HARIAN & SESSION RECOVERY TOOL (M9/M14) */}
+      {/* ========================================================= */}
+      <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-white/10">
+          <div className="flex items-center gap-2">
+            <History className="w-5 h-5 text-purple-400" />
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <span>Audit & Log Cetak Harian (Session Recovery & Counter)</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                  Hari Ini: {auditData?.daily.date || new Date().toISOString().slice(0, 10)}
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Lacak jumlah lembar keluar per hari, deteksi reprint counter, dan pemulihan sesi cetak darurat.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setReprintSessionCode('');
+              setReprintReason('');
+              setReprintCopies(1);
+              setIsReprintModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-400 active:scale-95 text-slate-950 text-xs font-bold transition-all shadow-md cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Cetak Ulang Manual</span>
+          </button>
+        </div>
+
+        {/* 4 Audit Statistics Metric Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* 1. Total Prints */}
+          <div className="p-3.5 rounded-xl bg-slate-900/80 border border-white/10 flex items-center justify-between">
+            <div>
+              <span className="text-[11px] text-slate-400 font-medium">Total Lembar Keluar:</span>
+              <div className="text-xl font-black font-mono text-white mt-0.5">
+                {auditData?.daily.totalPrints || 0} <span className="text-xs font-normal text-slate-400">lembar</span>
+              </div>
+            </div>
+            <div className="w-9 h-9 rounded-lg bg-sky-500/10 text-sky-400 flex items-center justify-center">
+              <Printer className="w-4 h-4" />
+            </div>
+          </div>
+
+          {/* 2. Successful Prints */}
+          <div className="p-3.5 rounded-xl bg-slate-900/80 border border-white/10 flex items-center justify-between">
+            <div>
+              <span className="text-[11px] text-slate-400 font-medium">Cetak Sukses:</span>
+              <div className="text-xl font-black font-mono text-emerald-400 mt-0.5">
+                {auditData?.daily.successfulPrints || 0} <span className="text-xs font-normal text-slate-400">lembar</span>
+              </div>
+            </div>
+            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+          </div>
+
+          {/* 3. Failed Prints */}
+          <div className="p-3.5 rounded-xl bg-slate-900/80 border border-white/10 flex items-center justify-between">
+            <div>
+              <span className="text-[11px] text-slate-400 font-medium">Kendala / Gagal:</span>
+              <div className="text-xl font-black font-mono text-rose-400 mt-0.5">
+                {auditData?.daily.failedPrints || 0} <span className="text-xs font-normal text-slate-400">job</span>
+              </div>
+            </div>
+            <div className="w-9 h-9 rounded-lg bg-rose-500/10 text-rose-400 flex items-center justify-center">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+          </div>
+
+          {/* 4. Reprint Counter */}
+          <div className="p-3.5 rounded-xl bg-slate-900/80 border border-white/10 flex items-center justify-between">
+            <div>
+              <span className="text-[11px] text-slate-400 font-medium">Reprint Counter:</span>
+              <div className="text-xl font-black font-mono text-amber-400 mt-0.5">
+                {auditData?.daily.reprintCount || 0} <span className="text-xs font-normal text-slate-400">kali</span>
+              </div>
+            </div>
+            <div className="w-9 h-9 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center">
+              <RotateCcw className="w-4 h-4" />
+            </div>
+          </div>
+        </div>
+
+        {/* Breakdown per Printer if exists */}
+        {auditData?.daily.printerBreakdown && Object.keys(auditData.daily.printerBreakdown).length > 0 && (
+          <div className="p-3 rounded-xl bg-slate-950/60 border border-white/5 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-400">Distribusi per Printer:</span>
+            {Object.entries(auditData.daily.printerBreakdown).map(([pName, count]) => (
+              <span
+                key={pName}
+                className="px-2.5 py-1 rounded-lg bg-white/5 text-[11px] text-slate-300 font-mono border border-white/10"
+              >
+                {pName}: <strong className="text-amber-300">{count}</strong> lembar
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Recent Print Jobs & Quick Recovery Section */}
+        <div className="space-y-2 pt-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-300">
+              Riwayat Transaksi Cetak Terkini & Fasilitas Pemulihan Sesi (Recovery)
+            </h4>
+            <span className="text-[10px] text-slate-500">
+              Menampilkan {auditData?.recent.length || 0} aktivitas cetak terbaru
+            </span>
+          </div>
+
+          {(!auditData?.recent || auditData.recent.length === 0) ? (
+            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 text-center text-xs text-slate-400">
+              Belum ada riwayat cetak hari ini. Aktivitas cetak sesi dan lembar foto akan tercatat otomatis di sini.
+            </div>
+          ) : (
+            <div className="divide-y divide-white/5 rounded-xl bg-slate-950/80 border border-white/10 overflow-hidden">
+              {auditData.recent.slice(0, 8).map((rec) => {
+                const timeStr = rec.timestamp
+                  ? new Date(rec.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                  : '-';
+                return (
+                  <div
+                    key={rec.id}
+                    className="p-3 flex items-center justify-between hover:bg-white/[0.02] transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                          rec.status === 'completed'
+                            ? 'bg-emerald-500/10 text-emerald-400'
+                            : rec.status === 'failed'
+                            ? 'bg-rose-500/10 text-rose-400'
+                            : 'bg-amber-500/10 text-amber-400'
+                        }`}
+                      >
+                        {rec.isReprint ? (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        ) : (
+                          <Printer className="w-3.5 h-3.5" />
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-white font-mono">
+                            {rec.sessionId}
+                          </span>
+                          {rec.isReprint && (
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              REPRINT
+                            </span>
+                          )}
+                          <span
+                            className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                              rec.status === 'completed'
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : rec.status === 'failed'
+                                ? 'bg-rose-500/20 text-rose-300'
+                                : 'bg-amber-500/20 text-amber-300'
+                            }`}
+                          >
+                            {rec.status.toUpperCase()}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                          <span>{timeStr}</span>
+                          <span>•</span>
+                          <span>Target: {rec.printerName}</span>
+                          <span>•</span>
+                          <span>
+                            {rec.completedCopies ?? rec.copies}/{rec.copies} Lembar
+                          </span>
+                          {rec.reprintReason && (
+                            <>
+                              <span>•</span>
+                              <span className="text-amber-300/80 italic">Alasan: {rec.reprintReason}</span>
+                            </>
+                          )}
+                          {rec.errorMessage && (
+                            <>
+                              <span>•</span>
+                              <span className="text-rose-400">{rec.errorMessage}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReprintSessionCode(rec.sessionId);
+                          setReprintCopies(rec.copies || 1);
+                          setReprintReason(rec.errorMessage ? `Pemulihan: ${rec.errorMessage}` : 'Cetak ulang sesi pelanggan');
+                          setIsReprintModalOpen(true);
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+                        title="Cetak ulang sesi ini untuk pemulihan kegagalan cetak"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Cetak Ulang (Recovery)</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

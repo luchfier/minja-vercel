@@ -2,9 +2,13 @@
 // Fastify instance + plugin registration
 // Sesuai ARCHITECTURE.md §6.1
 
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import fastifyStatic from '@fastify/static';
 import { PrismaClient } from '@prisma/client';
 import { loadEnv } from './config/env.js';
 import { globalErrorHandler } from './middleware/error.middleware.js';
@@ -21,6 +25,7 @@ import { deliveryRoutes } from './routes/delivery.routes.js';
 import { voucherRoutes } from './routes/voucher.routes.js';
 import { reportRoutes } from './routes/report.routes.js';
 import { assetRoutes } from './routes/asset.routes.js';
+import { cleanupService } from './services/cleanup.service.js';
 
 // Extend Fastify types to include prisma
 declare module 'fastify' {
@@ -57,7 +62,7 @@ export async function buildApp() {
   // Decorate Fastify with prisma instance
   app.decorate('prisma', prisma);
 
-  // Lifecycle hooks: connect/disconnect Prisma
+  // Lifecycle hooks: connect/disconnect Prisma & background workers
   app.addHook('onReady', async () => {
     try {
       await prisma.$connect();
@@ -65,9 +70,13 @@ export async function buildApp() {
     } catch (err) {
       app.log.warn({ err }, '⚠️ Database connection failed on startup, running in degraded mode');
     }
+
+    // Mulai scheduler pembersihan file cetak otomatis (setiap 1 jam)
+    cleanupService.startScheduledCleanup(1);
   });
 
   app.addHook('onClose', async () => {
+    cleanupService.stopScheduledCleanup();
     try {
       await prisma.$disconnect();
     } catch {
@@ -102,7 +111,26 @@ export async function buildApp() {
   // 5. Global error handler
   app.setErrorHandler(globalErrorHandler);
 
-  // 6. Register routes
+  // 6. Serve local storage files (Photos, prints, assets, and galleries)
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const storageDir = path.resolve(__dirname, '../storage');
+  if (!fs.existsSync(storageDir)) {
+    fs.mkdirSync(storageDir, { recursive: true });
+  }
+
+  await app.register(fastifyStatic, {
+    root: storageDir,
+    prefix: '/storage/',
+    decorateReply: true,
+    setHeaders: (res) => {
+      res.header('Access-Control-Allow-Origin', '*');
+      res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.header('Cache-Control', 'public, max-age=86400');
+    },
+  });
+
+  // 7. Register routes
   await app.register(systemRoutes);
   await app.register(adminAuthRoutes);
   await app.register(settingsRoutes);

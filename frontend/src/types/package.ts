@@ -4,7 +4,7 @@ export interface PackageItem {
   description: string;
   price: number;
   durationSeconds: number; // Durasi sesi foto & edit (dalam detik)
-  printCopies: number; // Jumlah lembar cetak fisik 4R bawaan
+  printCopies: number; // Jumlah lembar cetak fisik 10×15 cm bawaan
   additionalPrintPrice?: number; // Tarif per lembar tambah cetak
   isActive: boolean;
   sortOrder: number;

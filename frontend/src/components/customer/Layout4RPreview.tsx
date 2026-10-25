@@ -9,6 +9,7 @@ export interface Layout4RPreviewProps {
   onConfirmPrint: () => void;
   templateName: string;
   slotCount: number;
+  orientation?: 'portrait' | 'landscape';
   children: React.ReactNode; // Embedded CanvasEditor or rendered layout
 }
 
@@ -18,6 +19,7 @@ export const Layout4RPreview: React.FC<Layout4RPreviewProps> = ({
   onConfirmPrint,
   templateName,
   slotCount,
+  orientation = 'portrait',
   children,
 }) => {
   return (
@@ -34,7 +36,7 @@ export const Layout4RPreview: React.FC<Layout4RPreviewProps> = ({
                 Pratinjau Hasil Cetak Fisik
               </h3>
               <p className="text-xs text-slate-400">
-                Standar Format Cetak Lab • 1200 × 1800 px (300 DPI) • Dye-Sublimation Presisi
+                Kertas Foto Studio Berkualitas • Hasil Cetak Tajam & Jernih
               </p>
             </div>
           </div>
@@ -50,12 +52,16 @@ export const Layout4RPreview: React.FC<Layout4RPreviewProps> = ({
 
         {/* Layout Container with simulated paper shadow */}
         <div className="my-2 relative flex items-center justify-center">
-          <div className="relative max-h-[60vh] aspect-[2/3] p-3 rounded-2xl bg-white shadow-2xl">
+          <div
+            className={`relative max-h-[60vh] ${
+              orientation === 'landscape' ? 'aspect-[3/2]' : 'aspect-[2/3]'
+            } p-3 rounded-2xl bg-white shadow-2xl`}
+          >
             {children}
             {/* Safe Margin Guide Overlay */}
             <div className="absolute inset-5 border border-dashed border-red-500/30 pointer-events-none rounded-lg flex items-start justify-end p-1">
               <span className="text-[9px] font-mono text-red-500/70 bg-white/90 px-1 rounded">
-                Garis Potong Aman (Cut Margin)
+                Batas Potong Foto
               </span>
             </div>
           </div>

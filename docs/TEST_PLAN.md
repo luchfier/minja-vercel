@@ -28,7 +28,7 @@
 ### 1.2 Prinsip
 
 1. **Setiap milestone harus memiliki test yang lolos sebelum lanjut.**
-2. **Adapter eksternal di-mock saat unit test.** Kita tidak memerlukan koneksi Midtrans atau WhatsApp asli untuk unit test.
+2. **Adapter eksternal di-mock saat unit test.** Kita tidak memerlukan koneksi Midtrans atau server SMTP Email asli untuk unit test.
 3. **Integration test menggunakan database PostgreSQL test** (bisa menggunakan container Docker atau database terpisah).
 4. **Test yang memerlukan perangkat fisik (kamera, printer) ditandai dan dijelaskan cara pengujian manualnya.**
 5. **Tidak ada mock yang berpura-pura perangkat berfungsi.** Mock hanya mengembalikan data struktur yang valid, tidak mensimulasikan perilaku perangkat.
@@ -185,15 +185,15 @@ npx vitest run src/services/payment.service.test.ts
 | G05 | Token galeri cukup panjang | Unit | Token yang dihasilkan | Panjang 32 karakter |
 | G06 | accessCount bertambah saat diakses | Integration | Galeri diakses 3x | accessCount = 3 |
 
-### 3.9 Delivery (WhatsApp)
+### 3.9 Delivery (Email)
 
 | # | Test Case | Tipe | Kondisi | Hasil yang Diharapkan |
 |---|-----------|------|---------|----------------------|
-| D01 | Kirim WhatsApp | Integration | WA adapter di-mock, phone valid | 202, status queued |
-| D02 | Phone number format salah | Unit | phone = "081234" | 400 WHATSAPP_INVALID_PHONE |
-| D03 | Phone number format E.164 valid | Unit | phone = "6281234567890" | Lolos validasi |
+| D01 | Kirim Soft File Email | Integration | Email adapter di-mock, email valid | 200/202, sent = true |
+| D02 | Alamat email format salah | Unit | email = "bukan-email" | 400 EMAIL_INVALID_ADDRESS |
+| D03 | Alamat email valid | Unit | email = "pelanggan@gmail.com" | Lolos validasi |
 | D04 | Galeri kadaluwarsa saat kirim | Integration | Gallery expired | 400 GALLERY_EXPIRED |
-| D05 | Retry saat pengiriman gagal | Unit | Mock adapter throw error | retryCount++ , status tetap queued |
+| D05 | Retry saat pengiriman gagal | Unit | Mock transporter throw error | retryCount++ , status tetap queued |
 | D06 | Maks retry tercapai | Unit | retryCount >= maxRetries | status = failed |
 
 ### 3.10 Reports
@@ -239,13 +239,13 @@ npx vitest run src/services/payment.service.test.ts
 | MA05 | Sandbox transaction | Real (manual) | Memerlukan akun Midtrans sandbox |
 | MA06 | Production transaction | Real (manual) | Memerlukan akun Midtrans production |
 
-### 4.2 WhatsApp Adapter
+### 4.2 Email Delivery Service
 
 | # | Test Case | Mock/Real | Keterangan |
 |---|-----------|-----------|------------|
-| WA01 | Send message | Mock | Mock mengembalikan messageId dummy |
-| WA02 | Invalid phone | Mock | Mock mengembalikan error |
-| WA03 | Kirim ke nomor nyata | Real (manual) | Memerlukan WhatsApp Business API aktif |
+| EM01 | Send email notification | Mock | Simulasi dev mengembalikan sent=true & messageId |
+| EM02 | Invalid email address | Mock | Validasi sanitizeEmail melempar EMAIL_INVALID_ADDRESS |
+| EM03 | Kirim ke inbox nyata | Real (manual) | Memerlukan kredensial SMTP aktif |
 
 ### 4.3 Storage Adapter
 

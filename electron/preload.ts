@@ -19,6 +19,18 @@ export interface ElectronKioskBridge {
   onKioskEvent: (channel: string, callback: (...args: any[]) => void) => () => void;
 }
 
+export interface ElectronPrinterBridge {
+  listDevices: () => Promise<any[]>;
+  getStatus: (printerName: string) => Promise<any>;
+  submitJob: (payload: any) => Promise<any>;
+  getQueue: () => Promise<any>;
+  manualResume: () => Promise<boolean>;
+  cancelJob: () => Promise<boolean>;
+  getAuditStats: (dateStr?: string) => Promise<any>;
+  reprintJob: (sessionId: string, reason: string, copies?: number, printerName?: string) => Promise<any>;
+  onPrinterEvent: (event: string, callback: (...args: any[]) => void) => () => void;
+}
+
 const kioskBridge: ElectronKioskBridge = {
   isElectron: true,
   platform: process.platform,
@@ -48,5 +60,53 @@ const kioskBridge: ElectronKioskBridge = {
   },
 };
 
+const printerBridge: ElectronPrinterBridge = {
+  listDevices: () => {
+    return ipcRenderer.invoke('printer:list-devices');
+  },
+  getStatus: (printerName: string) => {
+    return ipcRenderer.invoke('printer:get-status', printerName);
+  },
+  submitJob: (payload: any) => {
+    return ipcRenderer.invoke('printer:submit-job', payload);
+  },
+  getQueue: () => {
+    return ipcRenderer.invoke('printer:get-queue');
+  },
+  manualResume: () => {
+    return ipcRenderer.invoke('printer:manual-resume');
+  },
+  cancelJob: () => {
+    return ipcRenderer.invoke('printer:cancel-job');
+  },
+  getAuditStats: (dateStr?: string) => {
+    return ipcRenderer.invoke('printer:get-audit-stats', dateStr);
+  },
+  reprintJob: (sessionId: string, reason: string, copies = 1, printerName?: string) => {
+    return ipcRenderer.invoke('printer:reprint-job', sessionId, reason, copies, printerName);
+  },
+  onPrinterEvent: (event: string, callback: (...args: any[]) => void) => {
+    const validEvents = [
+      'printer:event:queue-updated',
+      'printer:event:job-started',
+      'printer:event:job-progress',
+      'printer:event:sheet-printed',
+      'printer:event:queue-paused',
+      'printer:event:queue-resumed',
+      'printer:event:job-completed',
+      'printer:event:job-cancelled',
+    ];
+    if (validEvents.includes(event)) {
+      const subscription = (_event: any, ...args: any[]) => callback(...args);
+      ipcRenderer.on(event, subscription);
+      return () => {
+        ipcRenderer.removeListener(event, subscription);
+      };
+    }
+    return () => {};
+  },
+};
+
 // Expose context safely into window object with contextIsolation: true
 contextBridge.exposeInMainWorld('electronKiosk', kioskBridge);
+contextBridge.exposeInMainWorld('electronPrinter', printerBridge);

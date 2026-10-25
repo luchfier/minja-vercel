@@ -40,7 +40,7 @@ export class SettingsService {
       wallpaperUrl: settings.wallpaperUrl,
       attractVideoUrl: settings.attractVideoUrl,
       maintenanceMode: settings.maintenanceMode,
-      whatsappEnabled: settings.whatsappEnabled,
+      emailDeliveryEnabled: settings.emailDeliveryEnabled,
       galleryEnabled: settings.galleryEnabled,
       paymentTimeoutSeconds: settings.paymentTimeoutSeconds,
       autoResetSeconds: settings.autoResetSeconds,

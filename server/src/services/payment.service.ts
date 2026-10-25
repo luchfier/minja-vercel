@@ -459,15 +459,57 @@ export class PaymentService {
   }> {
     const pin = input.pin || input.adminPin || '';
 
-    // 1. Verifikasi PIN admin
+    // 1. Verifikasi PIN admin dengan proteksi brute-force & lockout
     const admin = await this.prisma.admin.findFirst();
     if (!admin) {
       throw new AppError(500, ErrorCode.ADMIN_NOT_INITIALIZED, 'Akun admin belum diinisialisasi');
     }
 
+    const now = new Date();
+    if (admin.lockedUntil && admin.lockedUntil > now) {
+      const remainingMinutes = Math.ceil(
+        (admin.lockedUntil.getTime() - now.getTime()) / (60 * 1000)
+      );
+      throw new AppError(
+        423,
+        ErrorCode.ADMIN_LOCKED_OUT,
+        `Akses admin sedang terkunci karena terlalu banyak percobaan salah. Coba lagi dalam ${remainingMinutes} menit.`,
+        { remainingMinutes }
+      );
+    }
+
     const isPinValid = await verifyPin(pin, admin.pinHash);
     if (!isPinValid) {
-      throw new AppError(401, ErrorCode.INVALID_PIN, 'PIN Admin tidak valid. Konfirmasi ditolak.');
+      const newAttempts = admin.failedAttempts + 1;
+      let lockedUntil: Date | null = null;
+      if (newAttempts >= 5) {
+        lockedUntil = new Date(now.getTime() + 10 * 60 * 1000); // 10 menit lockout
+      }
+
+      await this.prisma.admin.update({
+        where: { id: admin.id },
+        data: {
+          failedAttempts: newAttempts,
+          lockedUntil,
+        },
+      });
+
+      const sisa = Math.max(0, 5 - newAttempts);
+      throw new AppError(
+        401,
+        ErrorCode.INVALID_PIN,
+        lockedUntil
+          ? 'PIN salah 5 kali berturut-turut. Akses kasir dikunci selama 10 menit.'
+          : `PIN salah. Sisa kesempatan sebelum terkunci: ${sisa} kali.`
+      );
+    }
+
+    // Reset counter percobaan saat PIN berhasil
+    if (admin.failedAttempts > 0) {
+      await this.prisma.admin.update({
+        where: { id: admin.id },
+        data: { failedAttempts: 0, lockedUntil: null },
+      });
     }
 
     // 2. Cari transaksi pembayaran

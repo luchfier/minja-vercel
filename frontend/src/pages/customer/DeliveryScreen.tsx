@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import {
   Printer,
   QrCode,
-  MessageCircle,
+  Mail,
   CheckCircle2,
   Clock,
   Sparkles,
@@ -10,19 +10,27 @@ import {
   Check,
   ZoomIn,
   X,
+  AlertTriangle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { photoboothApi } from '../../services/photoboothApi';
 import { printerAdapter } from '../../adapters/printerAdapter';
 import { Button } from '../../components/common/Button';
-import { VirtualNumpad } from '../../components/common/VirtualNumpad';
+import { VirtualEmailKeyboard } from '../../components/common/VirtualEmailKeyboard';
 import { Modal } from '../../components/common/Modal';
 import { useToast } from '../../components/common/Toast';
-import {
-  generateGifFromPhotos,
-  downloadFile,
-  GeneratedGifResult,
-} from '../../services/gifService';
+function downloadFile(urlOrBlob: string | Blob, filename: string): void {
+  const link = document.createElement('a');
+  if (typeof urlOrBlob === 'string') {
+    link.href = urlOrBlob;
+  } else {
+    link.href = URL.createObjectURL(urlOrBlob);
+  }
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
 import {
   generateLivePhotoVideo,
   LivePhotoResult,
@@ -58,10 +66,16 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
   // Printing State
   const [printStatus, setPrintStatus] = useState<'queued' | 'printing' | 'completed' | 'failed'>('printing');
   const [printProgress, setPrintProgress] = useState<number>(30);
-
-  // High-Quality GIF Generation State
-  const [isGeneratingGif, setIsGeneratingGif] = useState<boolean>(true);
-  const [gifResult, setGifResult] = useState<GeneratedGifResult | null>(null);
+  const [pausedState, setPausedState] = useState<{
+    issue: string;
+    reason: string;
+    currentCopy: number;
+    totalCopies: number;
+  } | null>(null);
+  const [currentSheetInfo, setCurrentSheetInfo] = useState<{
+    current: number;
+    total: number;
+  }>({ current: 1, total: copies });
 
   // Live Photo (Motion Video) State
   const [isGeneratingLive, setIsGeneratingLive] = useState<boolean>(true);
@@ -72,55 +86,18 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
   // Modal zoom on image
   const [zoomPhotoUrl, setZoomPhotoUrl] = useState<string | null>(null);
   const [zoomTitle, setZoomTitle] = useState<string>('Pratinjau Foto');
-  const [zoomType, setZoomType] = useState<'image' | 'gif' | 'live'>('image');
+  const [zoomType, setZoomType] = useState<'image' | 'live'>('image');
 
-  // WhatsApp Modal State
-  const [isWaModalOpen, setIsWaModalOpen] = useState(false);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [isSendingWa, setIsSendingWa] = useState(false);
-  const [isWaSent, setIsWaSent] = useState(false);
+  // Email Modal State
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [emailAddress, setEmailAddress] = useState('');
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [isEmailSent, setIsEmailSent] = useState(false);
 
   // Auto Reset Countdown: 1 Menit (60 Detik)
   const [autoResetSeconds, setAutoResetSeconds] = useState(60);
 
-  // 1. Generate clean HD GIF in background without watermark/stamps
-  useEffect(() => {
-    let isMounted = true;
-
-    const createGif = async () => {
-      if (!capturedPhotos || capturedPhotos.length === 0) {
-        if (isMounted) setIsGeneratingGif(false);
-        return;
-      }
-
-      try {
-        setIsGeneratingGif(true);
-        const result = await generateGifFromPhotos(capturedPhotos, {
-          maxDimension: 720,
-          delayMs: 500,
-        });
-
-        if (isMounted) {
-          setGifResult(result);
-          setIsGeneratingGif(false);
-          if (photoboothApi.uploadGalleryFile && result.dataUrl) {
-            photoboothApi.uploadGalleryFile(sessionId, 'animated_gif', result.dataUrl, 'animation.gif').catch(() => {});
-          }
-        }
-      } catch (err) {
-        console.error('[DeliveryScreen] Gagal generate GIF:', err);
-        if (isMounted) setIsGeneratingGif(false);
-      }
-    };
-
-    createGif();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [capturedPhotos]);
-
-  // 1b. Generate Live Photo (Motion Video) in background with smooth cinematic crossfade
+  // 1. Generate Live Photo (Motion Video) in background with smooth cinematic crossfade
   useEffect(() => {
     let isMounted = true;
 
@@ -142,6 +119,19 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
         if (isMounted) {
           setLiveResult(result);
           setIsGeneratingLive(false);
+          if (photoboothApi.uploadGalleryFile && result.videoBlob && result.videoBlob.size > 0) {
+            const ext = result.mimeType.includes('mp4') ? 'mp4' : 'webm';
+            const fileName = `live-motion.${ext}`;
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              if (reader.result && typeof reader.result === 'string' && reader.result.length > 100) {
+                photoboothApi.uploadGalleryFile!(sessionId, 'live_video', reader.result, fileName).catch((err) => {
+                  console.warn('[DeliveryScreen] Gagal upload video live motion:', err);
+                });
+              }
+            };
+            reader.readAsDataURL(result.videoBlob);
+          }
         }
       } catch (err) {
         console.warn('[DeliveryScreen] Gagal generate Live Photo video:', err);
@@ -166,7 +156,7 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
     return () => clearInterval(interval);
   }, [capturedPhotos]);
 
-  // 2. Load private gallery URL and initiate printer job
+  // Total physical prints count calculation
   const totalPhysicalPrints = useMemo(() => {
     if (selectedPrintItems && selectedPrintItems.length > 0) {
       return selectedPrintItems.reduce((acc, it) => acc + (it.copies || 0), 0);
@@ -174,16 +164,98 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
     return copies;
   }, [selectedPrintItems, copies]);
 
-  // 2. Load private gallery URL and initiate printer jobs for all selected items
+  useEffect(() => {
+    setCurrentSheetInfo({ current: 1, total: totalPhysicalPrints });
+  }, [totalPhysicalPrints]);
+
+  // 2. Subscribe to real-time Print Engine IPC events (Queue, Paused, Resumed, Sheet Done)
+  useEffect(() => {
+    const unsubs: Array<() => void> = [];
+
+    // Job progress (0-100%)
+    unsubs.push(
+      printerAdapter.onPrinterEvent('printer:event:job-progress', (data: any) => {
+        if (typeof data?.percent === 'number') {
+          setPrintProgress(data.percent);
+        }
+      })
+    );
+
+    // Sheet printed event (sheet-by-sheet)
+    unsubs.push(
+      printerAdapter.onPrinterEvent('printer:event:sheet-printed', (data: any) => {
+        if (data?.currentCopy && data?.totalCopies) {
+          setCurrentSheetInfo({ current: data.currentCopy, total: data.totalCopies });
+          const calculated = Math.round((data.currentCopy / data.totalCopies) * 100);
+          setPrintProgress(calculated);
+        }
+      })
+    );
+
+    // Queue paused event (e.g. Paper Out on copy #2, Jam, Door open)
+    unsubs.push(
+      printerAdapter.onPrinterEvent('printer:event:queue-paused', (data: any) => {
+        console.warn('[DeliveryScreen] Print queue paused:', data);
+        setPausedState({
+          issue: data?.issue || 'paper_out',
+          reason: data?.reason || 'Kertas printer habis. Silakan hubungi operator.',
+          currentCopy: data?.currentCopy || 1,
+          totalCopies: data?.totalCopies || totalPhysicalPrints,
+        });
+      })
+    );
+
+    // Queue resumed event (automatically recovered once paper is inserted)
+    unsubs.push(
+      printerAdapter.onPrinterEvent('printer:event:queue-resumed', () => {
+        console.info('[DeliveryScreen] Print queue resumed!');
+        setPausedState(null);
+        showToast({
+          type: 'info',
+          title: 'Kertas Terpasang',
+          message: 'Pencetakan lembar foto otomatis dilanjutkan.',
+        });
+      })
+    );
+
+    // Job completed event
+    unsubs.push(
+      printerAdapter.onPrinterEvent('printer:event:job-completed', () => {
+        setPrintProgress(100);
+        setPrintStatus('completed');
+        setPausedState(null);
+        playButtonSound('success');
+        showToast({
+          type: 'success',
+          title: 'Foto Selesai Dicetak!',
+          message: `Silakan ambil ${totalPhysicalPrints} lembar foto fisik di baki printer.`,
+        });
+      })
+    );
+
+    // Job failed event
+    unsubs.push(
+      printerAdapter.onPrinterEvent('printer:event:job-failed', (data: any) => {
+        setPrintStatus('failed');
+        showToast({
+          type: 'error',
+          title: 'Kendala Pencetakan',
+          message: data?.error || 'Pekerjaan cetak mengalami kendala pada printer.',
+        });
+      })
+    );
+
+    return () => {
+      unsubs.forEach((u) => u && u());
+    };
+  }, [totalPhysicalPrints, showToast]);
+
+  // 2b. Initiate gallery URL loading & submit job to print engine
   useEffect(() => {
     let isMounted = true;
 
     const initDelivery = async () => {
-      const galRes = await photoboothApi.getGalleryUrl(sessionId);
-      if (galRes.success && isMounted) {
-        setGalleryData(galRes.data);
-      }
-
+      // 1. Upload hasil cetak & desain frame ke local storage booth & cloud
       if (selectedPrintItems && selectedPrintItems.length > 0) {
         for (const item of selectedPrintItems) {
           if (item.copies > 0 && item.url) {
@@ -193,14 +265,13 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
               layoutImageUrl: item.url,
             });
             if (photoboothApi.uploadGalleryFile) {
-              photoboothApi.uploadGalleryFile(sessionId, item.type === 'frame' ? 'print_strip' : 'single_photo', item.url, `${item.id}.jpg`).catch(() => {});
+              await photoboothApi.uploadGalleryFile(sessionId, item.type === 'frame' ? 'print_strip' : 'single_photo', item.url, `${item.id}.jpg`).catch(() => {});
             }
           }
         }
       } else {
-        // Background upload final print layout to gallery
         if (photoboothApi.uploadGalleryFile && finalLayoutUrl) {
-          photoboothApi.uploadGalleryFile(sessionId, 'print_strip', finalLayoutUrl, 'print-strip.jpg').catch(() => {});
+          await photoboothApi.uploadGalleryFile(sessionId, 'print_strip', finalLayoutUrl, 'print-strip.jpg').catch(() => {});
         }
 
         await printerAdapter.submitJob({
@@ -210,23 +281,40 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
         });
       }
 
-      // Simulate realistic printing stages
-      setTimeout(() => {
-        if (isMounted) setPrintProgress(70);
-      }, 3000);
-
-      setTimeout(() => {
-        if (isMounted) {
-          setPrintProgress(100);
-          setPrintStatus('completed');
-          playButtonSound('success');
-          showToast({
-            type: 'success',
-            title: 'Foto Selesai Dicetak!',
-            message: `Silakan ambil ${totalPhysicalPrints} lembar foto fisik di baki printer.`,
-          });
+      // 2. Upload semua pose foto asli kamera (HD) ke local storage & cloud
+      if (photoboothApi.uploadGalleryFile && capturedPhotos && capturedPhotos.length > 0) {
+        for (let idx = 0; idx < capturedPhotos.length; idx++) {
+          const photoUrl = capturedPhotos[idx];
+          await photoboothApi.uploadGalleryFile(sessionId, 'single_photo', photoUrl, `pose_${idx + 1}.jpg`).catch(() => {});
         }
-      }, 7000);
+      }
+
+      // 3. Ambil tautan galeri QR setelah seluruh foto tersimpan di penyimpanan
+      const galRes = await photoboothApi.getGalleryUrl(sessionId);
+      if (galRes.success && isMounted) {
+        setGalleryData(galRes.data);
+      }
+
+      // Fallback timer for browser/mock environments without native Electron PrintEngine
+      const isElectron = typeof window !== 'undefined' && Boolean(window.electronPrinter);
+      if (!isElectron) {
+        setTimeout(() => {
+          if (isMounted) setPrintProgress(70);
+        }, 3000);
+
+        setTimeout(() => {
+          if (isMounted) {
+            setPrintProgress(100);
+            setPrintStatus('completed');
+            playButtonSound('success');
+            showToast({
+              type: 'success',
+              title: 'Foto Selesai Dicetak!',
+              message: `Silakan ambil ${totalPhysicalPrints} lembar foto fisik di baki printer.`,
+            });
+          }
+        }, 7000);
+      }
     };
 
     initDelivery();
@@ -252,28 +340,30 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
     return () => clearInterval(timer);
   }, [onFinishAndReset]);
 
-  // Handle WhatsApp submission
-  const handleSendWhatsApp = async () => {
-    if (!phoneNumber || phoneNumber.length < 9) {
+  // Handle Email soft-file submission
+  const handleSendEmail = async () => {
+    const cleanEmail = emailAddress.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
       showToast({
         type: 'error',
-        title: 'Nomor Tidak Valid',
-        message: 'Masukkan nomor WhatsApp aktif dengan minimal 9 digit.',
+        title: 'Email Tidak Valid',
+        message: 'Masukkan format alamat email yang valid (contoh: user@gmail.com).',
       });
       return;
     }
 
-    setIsSendingWa(true);
+    setIsSendingEmail(true);
     try {
-      const res = await photoboothApi.sendWhatsApp(sessionId, phoneNumber);
+      const res = await photoboothApi.sendEmail(sessionId, cleanEmail);
       if (res.success) {
-        setIsWaSent(true);
-        setIsWaModalOpen(false);
+        setIsEmailSent(true);
+        setIsEmailModalOpen(false);
         playButtonSound('success');
         showToast({
           type: 'success',
           title: 'Soft File Terkirim!',
-          message: `Tautan galeri telah dikirim ke nomor WhatsApp ${phoneNumber}.`,
+          message: `Tautan galeri telah dikirim ke alamat email ${cleanEmail}.`,
         });
       } else {
         showToast({
@@ -283,7 +373,7 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
         });
       }
     } finally {
-      setIsSendingWa(false);
+      setIsSendingEmail(false);
     }
   };
 
@@ -352,8 +442,31 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
               Cetak Foto Fisik
             </h3>
             <p className="text-xs text-slate-400 mb-3">
-              Sedang memproses <strong>{copies} lembar</strong> cetak foto lab
+              Sedang memproses <strong>{totalPhysicalPrints} lembar</strong> cetak foto fisik
             </p>
+
+            {/* Paused State Recovery Alert (When paper is empty mid-job) */}
+            {pausedState && (
+              <div className="bg-amber-500/20 border border-amber-500/50 rounded-2xl p-3.5 mb-3 text-left animate-pulse">
+                <div className="flex items-center gap-2 text-amber-300 font-bold text-xs mb-1">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  <span>Kertas Sedang Diisi Ulang</span>
+                </div>
+                <p className="text-[11px] text-slate-200 leading-relaxed">
+                  {pausedState.reason || 'Kertas printer habis.'} Mencetak lembar ke-{pausedState.currentCopy} dari {pausedState.totalCopies}.
+                </p>
+                <div className="mt-2 flex items-center justify-between text-[10px] text-amber-300/90 border-t border-amber-500/20 pt-1.5">
+                  <span>Antrean dijeda sementara & otomatis lanjut saat kertas diisi</span>
+                  <button
+                    type="button"
+                    onClick={() => printerAdapter.manualResume()}
+                    className="px-2 py-0.5 rounded bg-amber-500/30 hover:bg-amber-500/50 text-white font-bold cursor-pointer transition-all"
+                  >
+                    Cek Status
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Printing Progress Bar */}
             <div className="bg-slate-900/80 rounded-2xl p-3 border border-white/10 mb-3 text-left">
@@ -361,12 +474,18 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
                 <span className="text-slate-300 font-semibold flex items-center gap-2">
                   {printStatus === 'completed' ? (
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : pausedState ? (
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                   ) : (
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                   )}
                   <span>
                     {printStatus === 'completed'
                       ? 'Pencetakan Selesai'
+                      : pausedState
+                      ? `Menunggu Kertas (Lembar ${pausedState.currentCopy}/${pausedState.totalCopies})...`
+                      : currentSheetInfo.total > 1
+                      ? `Mencetak Lembar ${currentSheetInfo.current} dari ${currentSheetInfo.total}...`
                       : 'Mencetak Foto Lab...'}
                   </span>
                 </span>
@@ -377,7 +496,11 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
 
               <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-amber-500 to-amber-400 transition-all duration-700 rounded-full"
+                  className={`h-full transition-all duration-700 rounded-full ${
+                    pausedState
+                      ? 'bg-amber-500 animate-pulse'
+                      : 'bg-gradient-to-r from-amber-500 to-amber-400'
+                  }`}
                   style={{ width: `${printProgress}%` }}
                 />
               </div>
@@ -499,40 +622,6 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
                     <ZoomIn className="w-2.5 h-2.5 opacity-70" />
                   </span>
                 </div>
-
-                {/* 3. Looping GIF Card */}
-                {gifResult ? (
-                  <div
-                    onClick={() => {
-                      setZoomPhotoUrl(gifResult.dataUrl);
-                      setZoomType('gif');
-                      setZoomTitle('Animasi GIF Photobooth');
-                    }}
-                    className="relative group cursor-pointer flex flex-col items-center"
-                  >
-                    <div className="w-26 h-32 rounded-xl bg-black p-1 shadow-md border border-amber-400/40 overflow-hidden flex items-center justify-center group-hover:scale-105 transition-transform relative">
-                      <img
-                        src={gifResult.dataUrl}
-                        alt="Animasi GIF"
-                        className="w-full h-full object-contain rounded-lg"
-                      />
-                      <div className="absolute top-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[8px] font-black text-amber-400">
-                        GIF
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-bold text-amber-400 mt-1 flex items-center gap-1">
-                      <span>Animasi GIF</span>
-                      <ZoomIn className="w-2.5 h-2.5 opacity-70" />
-                    </span>
-                  </div>
-                ) : isGeneratingGif ? (
-                  <div className="w-26 h-32 rounded-xl bg-white/5 border border-dashed border-white/15 flex flex-col items-center justify-center p-2 text-center text-slate-400">
-                    <Sparkles className="w-4 h-4 text-amber-400 animate-spin mb-1" />
-                    <span className="text-[9px] font-semibold text-slate-300">
-                      Menyiapkan GIF...
-                    </span>
-                  </div>
-                ) : null}
               </div>
 
               {/* Mini Photos Strip */}
@@ -570,7 +659,7 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
         </div>
 
         {/* ========================================================= */}
-        {/* RIGHT COLUMN: DIGITAL SOFT-FILE (QR CODE & WHATSAPP)      */}
+        {/* RIGHT COLUMN: DIGITAL SOFT-FILE (QR CODE & EMAIL)         */}
         {/* ========================================================= */}
         <div className="glass-panel-elevated rounded-3xl p-6 flex flex-col justify-between text-center border-white/10 shadow-2xl">
           <div>
@@ -586,15 +675,20 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
             </p>
 
             {/* QR Code Container */}
-            {galleryData && (
+            {galleryData ? (
               <div className="p-3 bg-white rounded-2xl inline-block shadow-xl my-1">
                 <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
                     galleryData.galleryUrl
                   )}`}
                   alt="QR Galeri Privat"
                   className="w-34 h-34 object-contain"
                 />
+              </div>
+            ) : (
+              <div className="w-34 h-34 mx-auto my-1 rounded-2xl bg-white/5 border border-dashed border-white/15 flex flex-col items-center justify-center p-3 text-slate-400">
+                <Sparkles className="w-6 h-6 text-sky-400 animate-spin mb-1" />
+                <span className="text-[10px] font-semibold text-slate-300">Menyiapkan QR...</span>
               </div>
             )}
 
@@ -623,19 +717,19 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
             </p>
           </div>
 
-          {/* WhatsApp Share Button */}
+          {/* Email Share Button */}
           <div className="mt-3 pt-3 border-t border-white/10">
             <Button
-              variant={isWaSent ? 'glass' : 'primary'}
+              variant={isEmailSent ? 'glass' : 'primary'}
               size="md"
               className="w-full"
               onClick={() => {
                 playButtonSound('primary');
-                setIsWaModalOpen(true);
+                setIsEmailModalOpen(true);
               }}
-              leftIcon={<MessageCircle className="w-4 h-4 text-emerald-400" />}
+              leftIcon={<Mail className="w-4 h-4 text-amber-400" />}
             >
-              {isWaSent ? 'Terkirim ke WhatsApp ✓' : 'Kirim Soft File ke WhatsApp'}
+              {isEmailSent ? 'Terkirim ke Email ✓' : 'Kirim Soft File ke Email'}
             </Button>
           </div>
         </div>
@@ -713,20 +807,19 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
                     if (zoomType === 'live' && liveResult) {
                       const ext = liveResult.mimeType.includes('mp4') ? 'mp4' : 'webm';
                       downloadFile(liveResult.videoUrl, `minja-live-photo-${sessionId}.${ext}`);
-                    } else {
-                      const ext = zoomPhotoUrl.includes('image/gif') ? 'gif' : 'jpg';
-                      downloadFile(zoomPhotoUrl, `minja-export-${sessionId}-${Date.now()}.${ext}`);
+                    } else if (zoomPhotoUrl) {
+                      downloadFile(zoomPhotoUrl, `minja-photo-${sessionId}-${Date.now()}.jpg`);
                     }
                     showToast({
                       type: 'success',
                       title: 'File Diunduh',
-                      message: zoomType === 'live' ? 'Video Live Photo berhasil diunduh.' : 'File berhasil disimpan.',
+                      message: zoomType === 'live' ? 'Video Live Photo berhasil diunduh.' : 'Foto berhasil diunduh.',
                     });
                   }}
                   className="px-4 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-2 cursor-pointer transition-all active:scale-95"
                 >
                   <Download className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{zoomType === 'live' ? 'Unduh Video Live (.mp4)' : 'Unduh File Ini'}</span>
+                  <span>{zoomType === 'live' ? 'Unduh Video Live' : 'Unduh Foto Ini'}</span>
                 </button>
 
                 <Button
@@ -742,29 +835,46 @@ export const DeliveryScreen: React.FC<DeliveryScreenProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Modal Input Nomor WhatsApp Menggunakan Virtual Numpad */}
+      {/* Modal Input Email Menggunakan Touch Virtual Keyboard */}
       <Modal
-        isOpen={isWaModalOpen}
-        onClose={() => setIsWaModalOpen(false)}
-        title="Kirim Hasil Foto ke WhatsApp"
-        maxWidth="md"
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        title="Kirim Soft File ke Email"
+        maxWidth="lg"
       >
-        <div className="flex flex-col items-center">
-          <p className="text-xs text-slate-300 text-center mb-4">
-            Masukkan nomor WhatsApp yang diawali <code>08</code> atau <code>628</code>. Tautan galeri digital privat akan dikirim secara instan.
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-xs text-slate-300 text-center">
+            Masukkan alamat email Anda untuk menerima tautan unduhan galeri digital privat (berisi strip foto, foto HD, dan video Live Photo).
           </p>
 
-          <div className="w-full max-w-sm h-14 rounded-2xl glass-input mb-4 px-4 flex items-center justify-center text-2xl font-mono tracking-widest text-emerald-400 border border-emerald-500/30">
-            {phoneNumber || '08xxxxxxxxxx'}
+          <div className="w-full h-13 rounded-2xl glass-input px-4 flex items-center justify-between border border-amber-500/30">
+            <div className="flex items-center gap-2 overflow-hidden flex-1">
+              <Mail className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <input
+                type="email"
+                value={emailAddress}
+                onChange={(e) => setEmailAddress(e.target.value)}
+                placeholder="nama@email.com"
+                className="w-full bg-transparent text-white font-mono text-base outline-none placeholder:text-slate-500"
+              />
+            </div>
+            {emailAddress && (
+              <button
+                type="button"
+                onClick={() => setEmailAddress('')}
+                className="w-6 h-6 rounded-full bg-white/10 text-slate-300 hover:text-white flex items-center justify-center text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            )}
           </div>
 
-          <VirtualNumpad
-            value={phoneNumber}
-            onChange={setPhoneNumber}
-            maxLength={13}
-            submitLabel="Kirim"
-            onSubmit={handleSendWhatsApp}
-            isSubmitDisabled={isSendingWa || phoneNumber.length < 9}
+          <VirtualEmailKeyboard
+            value={emailAddress}
+            onChange={setEmailAddress}
+            submitLabel={isSendingEmail ? 'Mengirim...' : 'Kirim Email'}
+            onSubmit={handleSendEmail}
+            isSubmitDisabled={isSendingEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress.trim())}
           />
         </div>
       </Modal>

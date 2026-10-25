@@ -520,7 +520,10 @@ class HttpPhotoboothApi implements IPhotoboothApi {
               id: t.id,
               name: t.name,
               thumbnailUrl: t.thumbnailUrl || fb?.thumbnailUrl || '',
-              frameUrl: t.frameOverlayUrl || fb?.frameUrl || '',
+              frameUrl:
+                t.frameOverlayUrl && !t.frameOverlayUrl.startsWith('/templates/')
+                  ? t.frameOverlayUrl
+                  : fb?.frameUrl || '',
               layoutType: t.layoutType || (t.orientation === 'landscape' ? '4R_LANDSCAPE' : '4R_PORTRAIT'),
               width: t.width || (t.orientation === 'landscape' ? 1800 : 1200),
               height: t.height || (t.orientation === 'landscape' ? 1200 : 1800),
@@ -548,15 +551,15 @@ class HttpPhotoboothApi implements IPhotoboothApi {
     return this.fallback.getTemplates();
   }
 
-  async sendWhatsApp(sessionId: string, phoneNumber: string): Promise<ApiResponse<{ sent: boolean; messageId: string }>> {
+  async sendEmail(sessionId: string, email: string): Promise<ApiResponse<{ sent: boolean; messageId: string }>> {
     try {
-      const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/whatsapp`, {
+      const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Booth-Key': BOOTH_KEY,
         },
-        body: JSON.stringify({ phoneNumber }),
+        body: JSON.stringify({ email }),
       });
       if (res.ok) {
         const json = await res.json();
@@ -565,16 +568,16 @@ class HttpPhotoboothApi implements IPhotoboothApi {
             success: true,
             data: {
               sent: json.data.sent ?? true,
-              messageId: json.data.messageId || 'wa-sent',
+              messageId: json.data.messageId || 'email-sent',
             },
             timestamp: json.timestamp || new Date().toISOString(),
           };
         }
       }
     } catch (e) {
-      console.warn('[HttpApi] Gagal mengirim WhatsApp via backend, fallback offline:', e);
+      console.warn('[HttpApi] Gagal mengirim email soft file via backend, fallback offline:', e);
     }
-    return this.fallback.sendWhatsApp(sessionId, phoneNumber);
+    return this.fallback.sendEmail(sessionId, email);
   }
 
   async getGalleryUrl(sessionId: string): Promise<ApiResponse<{ qrString: string; galleryUrl: string; expiresAt: string }>> {
@@ -616,11 +619,9 @@ class HttpPhotoboothApi implements IPhotoboothApi {
           ? 'layout_4r'
           : fileType === 'single_photo'
             ? 'raw_photo'
-            : fileType === 'animated_gif'
-              ? 'gif'
-              : fileType === 'live_video'
-                ? 'live_video'
-                : 'layout_4r';
+            : fileType === 'live_video'
+              ? 'live_video'
+              : 'layout_4r';
 
       const res = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/gallery/upload`, {
         method: 'POST',
@@ -927,17 +928,23 @@ class HttpPhotoboothApi implements IPhotoboothApi {
             height: t.height || (t.orientation === 'landscape' ? 1200 : 1800),
             isActive: t.isActive ?? true,
             isDefault: idx === 0,
-            slots: Array.isArray(t.slots)
-              ? t.slots.map((s: any, sIdx: number) => ({
-                id: s.id || `s-${sIdx}`,
-                x: s.x,
-                y: s.y,
-                width: s.width,
-                height: s.height,
-                rotation: s.rotation || 0,
-                layerIndex: s.layerIndex || 1,
-              }))
-              : [],
+            slots: (() => {
+              let sList = t.slots;
+              if (typeof sList === 'string') {
+                try { sList = JSON.parse(sList); } catch {}
+              }
+              return Array.isArray(sList)
+                ? sList.map((s: any, sIdx: number) => ({
+                  id: s.id || `s-${sIdx}`,
+                  x: Number(s.x) || 0,
+                  y: Number(s.y) || 0,
+                  width: Number(s.width) || 100,
+                  height: Number(s.height) || 100,
+                  rotation: Number(s.rotation) || 0,
+                  layerIndex: Number(s.layerIndex) || 1,
+                }))
+                : [];
+            })(),
           }));
           return { success: true, data: mapped, timestamp: json.timestamp || new Date().toISOString() };
         }
@@ -1041,17 +1048,23 @@ class HttpPhotoboothApi implements IPhotoboothApi {
           const mapped: TemplateItem = {
             id: t.id,
             name: t.name,
-            thumbnailUrl: t.thumbnailUrl,
-            frameUrl: t.frameOverlayUrl,
+            thumbnailUrl: t.thumbnailUrl || '',
+            frameUrl: t.frameOverlayUrl || tpl.frameUrl || '',
             layoutType: t.layoutType || (t.orientation === 'landscape' ? '4R_LANDSCAPE' : '4R_PORTRAIT'),
             width: t.width || tpl.width || (t.orientation === 'landscape' ? 1800 : 1200),
             height: t.height || tpl.height || (t.orientation === 'landscape' ? 1200 : 1800),
-            isActive: t.isActive,
-            isDefault: tpl.isDefault ?? false,
-            slots: Array.isArray(t.slots) ? t.slots : [],
+            isActive: t.isActive ?? true,
+            slots: (() => {
+              let sList = t.slots;
+              if (typeof sList === 'string') {
+                try { sList = JSON.parse(sList); } catch {}
+              }
+              if (Array.isArray(sList) && sList.length > 0) return sList;
+              return tpl.slots || [];
+            })(),
           };
           try {
-            await this.fallback.updateTemplate(token, id, tpl);
+            await this.fallback.updateTemplate(token, id, mapped);
           } catch {}
           return {
             success: true,
@@ -1059,9 +1072,21 @@ class HttpPhotoboothApi implements IPhotoboothApi {
             timestamp: json.timestamp || new Date().toISOString(),
           };
         }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        console.error('[HttpApi] Server rejected updateTemplate:', res.status, errJson);
+        const errMsg = errJson?.error?.message || `Gagal memperbarui template di server (Status ${res.status})`;
+        return {
+          success: false,
+          error: {
+            code: errJson?.error?.code || 'UPDATE_TEMPLATE_FAILED',
+            message: errMsg,
+          },
+          timestamp: new Date().toISOString(),
+        };
       }
     } catch (e) {
-      console.warn('[HttpApi] Gagal updateTemplate via backend:', e);
+      console.warn('[HttpApi] Gagal updateTemplate via backend (jaringan offline), beralih ke fallback:', e);
     }
     return this.fallback.updateTemplate(token, id, tpl);
   }

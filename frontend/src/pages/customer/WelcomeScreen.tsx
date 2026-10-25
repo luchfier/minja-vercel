@@ -126,7 +126,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           <span>•</span>
           <span>Cetak Instan Kualitas Studio (Lab Quality)</span>
           <span>•</span>
-          <span>Soft File QR & WhatsApp Otomatis</span>
+          <span>Soft File QR & Email Otomatis</span>
         </div>
 
         <div>

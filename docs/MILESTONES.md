@@ -41,7 +41,7 @@ gantt
     
     section Distribution
     M10 Galeri & QR             :m10, after m9, 3d
-    M11 WhatsApp Delivery       :m11, after m10, 2d
+    M11 Email Delivery          :m11, after m10, 2d
     
     section Admin & Polish
     M12 Laporan & Ekspor CSV    :m12, after m11, 2d
@@ -325,20 +325,20 @@ npm run test -- --grep "gallery|storage"
 
 ---
 
-### M11 — WhatsApp Delivery
+### M11 — Email Delivery
 
-**Tujuan:** Sistem bisa mengirim tautan galeri ke pelanggan via WhatsApp Cloud API.
+**Tujuan:** Sistem bisa mengirim tautan galeri ke pelanggan via Layanan Email (SMTP / Nodemailer).
 
 **Deliverables:**
-- [ ] `POST /api/delivery/whatsapp` — Kirim pesan WA
+- [ ] `POST /api/sessions/:sessionId/email` — Kirim soft file via email
 - [ ] `GET /api/delivery/:id/status` — Status pengiriman
-- [ ] WhatsApp Cloud API adapter (mock + real)
+- [ ] Email Service (mock simulation + real SMTP nodemailer transporter)
 - [ ] Delivery queue dengan retry mechanism
-- [ ] E.164 phone number validation
+- [ ] Validasi format email RFC
 - [ ] Test cases D01-D06
 
 **Pengujian yang belum dapat dilakukan tanpa kredensial:**
-- WA03: Memerlukan WhatsApp Business API aktif dan nomor yang terverifikasi.
+- EM03: Memerlukan akun SMTP aktif (Gmail app password / custom domain SMTP).
 
 ---
 
@@ -414,7 +414,7 @@ npm run test -- --grep "gallery|storage"
 | M7 | EDSDK memerlukan lisensi Canon | Library tidak bisa digunakan | Investigasi gphoto2 sebagai alternatif open-source |
 | M9 | Printer 4R tidak tersedia | Print job tidak bisa diuji | Gunakan mock adapter, uji manual saat printer tersedia |
 | M10 | Object storage belum dikonfigurasi | Upload foto gagal | Gunakan mock adapter atau local file storage sementara |
-| M11 | WhatsApp Business API belum aktif | Pengiriman WA gagal | Gunakan mock adapter, uji saat API aktif |
+| M11 | Kredensial SMTP belum dikonfigurasi | Pengiriman email gagal | Gunakan mock simulation, uji saat kredensial SMTP tersedia |
 | M13 | Layar sentuh tidak tersedia | Touch interaction tidak bisa diuji | Gunakan mouse untuk simulasi, uji real saat touchscreen tersedia |
 | M14 | Code signing certificate tidak ada | Installer memunculkan warning Windows SmartScreen | Beli certificate atau informasikan ke pengguna untuk bypass |
 
