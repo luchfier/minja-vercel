@@ -12,9 +12,9 @@ Selamat datang di repositori **MinjaPhotobooth**, sistem photobooth mandiri (*se
 | **Desktop Client** | Electron, React 18, TypeScript, Vite |
 | **Penyimpanan Lokal** | SQLite (better-sqlite3) — cache offline |
 | **Pembayaran** | Midtrans Snap QRIS |
-| **Distribusi Foto** | Object Storage (S3/R2), QR Code, WhatsApp Cloud API |
+| **Distribusi Foto** | Object Storage (S3/R2), QR Code, Layanan Email (SMTP) |
 | **Kamera** | Webcam USB, Virtual Webcam, Canon EOS 600D (adapter modular) |
-| **Cetak** | Windows Print Spooler — kertas 4R (10×15 cm, 300 DPI) |
+| **Cetak** | Windows Print Spooler — kertas foto 10×15 cm (300 DPI) |
 | **Admin Panel** | Autentikasi PIN (Argon2id), CRUD paket, laporan CSV |
 
 ---
@@ -59,7 +59,7 @@ Selamat datang di repositori **MinjaPhotobooth**, sistem photobooth mandiri (*se
 | 📋 | **M8** Editor & Renderer 4R | Filter, template, Sharp 300 DPI compositor |
 | 📋 | **M9** Pipeline Cetak | Windows Spooler adapter, print queue |
 | 📋 | **M10** Galeri & QR | Object storage, galeri privat, signed URLs |
-| 📋 | **M11** WhatsApp Delivery | WhatsApp Cloud API, delivery queue |
+| 📋 | **M11** Email Delivery | Layanan Email (SMTP / Nodemailer), delivery queue |
 | 📋 | **M12** Laporan & CSV | Ringkasan pendapatan, audit log, ekspor CSV |
 | 📋 | **M13** Touch UI | Antarmuka pelanggan lengkap, state orchestration |
 | 📋 | **M14** Hardening & Installer | Windows installer, auto-update, kiosk mode |
